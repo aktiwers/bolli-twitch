@@ -14,7 +14,7 @@ Bolli Twitch is not made by or connected to Twitch. You can watch without an acc
   <a href="https://github.com/aktiwers/bolli-twitch/releases/latest/download/bolli-twitch.ipk"><img src="assets/webos.png" alt="Download for LG webOS (IPK)" width="240"></a>
 </p>
 
-<p align="center">Google TV and Android TV: open the APK link in the Downloader app (<a href="#google-tv-and-android-tv">see below</a>).</p>
+<p align="center">Google TV and Android TV: enter the code <b>6185061</b> in the Downloader app, or open <a href="https://aftv.news/6185061">aftv.news/6185061</a> in a browser.</p>
 
 <p align="center">LG webOS: add the Homebrew repository <code>https://aktiwers.github.io/bolli-homebrew/apps.json</code> in the Homebrew Channel (<a href="#lg-webos">see below</a>).</p>
 
@@ -40,8 +40,8 @@ Bolli Twitch is not made by or connected to Twitch. You can watch without an acc
 
 1. Install **Downloader** (by AFTVnews) from Google Play.
 2. Let Downloader install apps: Settings › Apps › Security & restrictions › Unknown sources › Downloader.
-3. Open Downloader and enter the address
-   `https://github.com/aktiwers/bolli-twitch/releases/latest/download/bolli-twitch.apk`
+3. Open Downloader and enter the code **6185061**. The short link [aftv.news/6185061](https://aftv.news/6185061) or the full address
+   `https://github.com/aktiwers/bolli-twitch/releases/latest/download/bolli-twitch.apk` does the same.
 4. Install, and open **Bolli Twitch** under Your apps.
 
 A new version installs the same way, over the old one. You stay signed in.
