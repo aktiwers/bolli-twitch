@@ -1,0 +1,79 @@
+/* Bolli Twitch: Browse, a category's page and Search (colours and sizes: twitch.css; tiles and rows: home.css).
+   Measured at 1920x1080 in Twitch's TV app, written / 1.5. */
+
+.bt-browse, .bt-category, .bt-search, .bt-search-input, .bt-results { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
+
+/* A grid of tiles (Browse 148 apart, a category 296), rows 276 apart; it slides .1s to keep the focused row in place */
+.bt-grid { position: absolute; left: 48px; top: 0; width: 1184px; -webkit-transition: -webkit-transform .1s ease-in-out; }
+.bt-grid-row { position: absolute; left: 0; width: 1184px; height: 240px; }
+
+/* Browse: the page colour behind the menu over the rows that slid up; the fade over the row cut by the bottom */
+.bt-browse-band { position: absolute; left: 0; top: 0; width: 1280px; height: 120px; z-index: 2; background: #0e0e10; }
+.bt-browse-fade, .bt-category-fade { position: absolute; left: 0; width: 1280px; height: 312px; z-index: 1; opacity: .7;
+                                     background: linear-gradient(rgba(14, 14, 16, 0), #0e0e10 30%); }
+.bt-browse-fade { top: 636px; }
+
+/* A category: the hero's picture and box art (its own lines unused), the name at 216, its counts, Follow (the heart
+   28.67 wide) and Not Interested; the grid's focused row at 372 under the fade at 600 */
+.bt-category .bt-hero-text, .bt-results .bt-hero-text, .bt-results .bt-hero-art { display: none; }
+.bt-category-fade { top: 600px; }
+.bt-category-head { position: absolute; left: 216px; top: 184.67px; z-index: 3; color: #efeff1; white-space: nowrap; }
+.bt-category-name { max-width: 1000px; overflow: hidden; text-overflow: ellipsis; font-size: 21.6px; line-height: 32.4px; }
+.bt-category-stats { font-size: 15.6px; line-height: 23.4px; }
+.bt-category-buttons { position: absolute; left: 0; top: 67.33px; font-size: 0; }
+.bt-category-buttons .bt-button { margin-right: 24px; height: 43.33px; }
+
+/* Search: Twitch's page top (the magnifier, the heading, the field 518 wide and the Search button); the field takes
+   the typing look while the keyboard has focus, its end kept in view (right to left outside, left to right inside) */
+.bt-search-icon { position: absolute; left: 320px; top: 175.33px; width: 52.67px; height: 52.67px; }
+.bt-search-heading { position: absolute; left: 404px; top: 180.67px; font-size: 28.8px; line-height: 34.56px; font-weight: 600; color: #efeff1; white-space: nowrap; }
+.bt-search-field { position: absolute; left: 332px; top: 264px; width: 518px; height: 43.33px; box-sizing: border-box; padding: 0 12px;
+                   border-radius: 7.2px; background: #18181b; box-shadow: inset 0 0 0 .67px rgba(222, 222, 227, .4);
+                   overflow: hidden; white-space: nowrap; direction: rtl; text-align: left; font-size: 16.8px; line-height: 43.33px; color: #efeff1; }
+.bt-search-field--typing { box-shadow: 0 0 0 1.33px #a970ff, inset 0 0 0 1.33px #a970ff; }
+.bt-search-text { direction: ltr; unicode-bidi: embed; }
+.bt-search-field--empty .bt-search-text { color: #adadb8; }
+.bt-search-field--typing .bt-search-text:after, .bt-search-field--typing.bt-search-field--empty .bt-search-text:before {
+    content: ''; display: inline-block; vertical-align: top; width: 1.33px; height: 22px; margin: 10.67px 0 0 1px; background: #efeff1; }
+.bt-search-field--typing.bt-search-field--empty .bt-search-text:after { display: none; }
+.bt-search-go { position: absolute; left: 862px; top: 264px; height: 43.33px; }
+
+/* Bolli's keyboard in Twitch's buttons: keys 48 wide, 6 apart, lines 49.33 apart; focus the light box with the ring */
+.bt-search-keys { position: absolute; left: 96px; top: 340px; }
+.bt-search .bd-keyboard-line { height: 43.33px; margin-bottom: 6px; white-space: nowrap; font-size: 0; }
+.bt-search .bd-key { display: inline-block; vertical-align: top; box-sizing: border-box; width: 48px; height: 43.33px; margin-right: 6px;
+                     border: 2.67px solid transparent; border-radius: 7.2px; background: rgba(255, 255, 255, .16); color: #dedee3;
+                     font-size: 16.8px; line-height: 38px; font-weight: 600; text-align: center; }
+.bt-search .bd-key--wide2 { width: 102px; }
+.bt-search .bd-key--wide6 { width: 318px; }
+.bt-search .bd-key--focused { background: #fff; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; color: #1f1f23; }
+.bt-key-icon { display: inline-block; vertical-align: top; width: 25.33px; height: 25.33px; margin-top: 6.33px; }
+
+/* The list beside the keyboard, as Twitch's Recent Searches: the heading, rows 43.33 tall 55.33 apart (5 in view,
+   sliding .1s), an icon at 13.33, the text at 47.33; suggestions set the typed part apart and show their kind */
+.bt-list { position: absolute; left: 656px; top: 340px; width: 528px; }
+.bt-list-heading { height: 42.67px; font-size: 15.6px; line-height: 18.72px; text-transform: uppercase; color: #efeff1; }
+.bt-list-box { position: relative; left: -4px; top: -4px; width: 536px; height: 273px; overflow: hidden; }
+.bt-list-strip { position: absolute; left: 4px; top: 4px; width: 528px; -webkit-transition: -webkit-transform .1s ease-in-out; }
+.bt-list-row { position: absolute; left: 0; width: 528px; height: 43.33px; box-sizing: border-box; border: 2.67px solid transparent; border-radius: 7.2px; color: #dedee3; }
+.bt-list-row.bt-focused { background: #fff; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; color: #1f1f23; }
+.bt-list-icon { position: absolute; left: 10.67px; top: 6.33px; width: 25.33px; height: 25.33px; }
+.bt-list-svg { position: absolute; left: 0; top: 0; width: 25.33px; height: 25.33px; }
+.bt-list-pic { position: absolute; left: 0; top: 0; width: 25.33px; height: 25.33px; image-rendering: -webkit-optimize-contrast; }
+.bt-list-icon--art .bt-list-pic { left: 3.17px; width: 19px; }
+.bt-list-icon--avatar .bt-list-pic { border-radius: 50%; }
+.bt-list-text { position: absolute; left: 44.67px; right: 84px; top: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+                font-size: 16.8px; line-height: 38px; font-weight: 600; }
+.bt-list-match { color: #efeff1; }
+.bt-list-rest, .bt-list-side { color: #adadb8; }
+.bt-list-row--plain .bt-list-match { color: inherit; }
+.bt-list-row.bt-focused .bt-list-match { color: #0e0e10; }
+.bt-list-row.bt-focused .bt-list-rest, .bt-list-row.bt-focused .bt-list-side { color: #53535f; }
+.bt-list-row--plain.bt-focused .bt-list-match { color: inherit; }
+.bt-list-side { position: absolute; right: 10.67px; top: 0; font-size: 15.6px; line-height: 38px; }
+.bt-list-live { left: auto; right: 10.67px; top: 7.3px; }
+
+/* Search's results: "Showing results for:" and the term over the top picture, rows as on Home */
+.bt-results-head { position: absolute; left: 60px; top: 212.67px; z-index: 3; white-space: nowrap; }
+.bt-results-label { font-size: 16.8px; line-height: 20.16px; font-weight: 600; color: #adadb8; }
+.bt-results-term { max-width: 1100px; overflow: hidden; text-overflow: ellipsis; font-size: 28.8px; line-height: 34.56px; font-weight: 600; color: #efeff1; }

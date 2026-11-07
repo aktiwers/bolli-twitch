@@ -1,0 +1,75 @@
+/* Bolli Twitch: Settings, Your Profile, Sign In, Following's card and the error pages (colours and sizes: twitch.css).
+   Measured at 1920x1080 in Twitch's TV app, written / 1.5. */
+
+/* Settings' cards: 1184 x 101.33 one under the other from y 174, in a border of the page colour and the purple ring
+   when focused; #26262c, focused #e6e6ea with dark text and icon outlines. The cover hides cards slid under the top */
+.bt-settings, .bt-sign, .bt-err { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
+.bt-set-cover { position: absolute; left: 0; top: 0; width: 1280px; height: 168px; z-index: 1; background: #0e0e10; }
+.bt-set-list { position: absolute; left: 48px; width: 1184px; -webkit-transition: -webkit-transform .1s ease-in-out; }
+.bt-set-heading { position: absolute; left: 0; width: 1184px; padding-top: 18px; font-size: 16.8px; line-height: 20.16px; font-weight: 600; color: #efeff1; }
+.bt-set-card { position: absolute; left: 0; width: 1184px; height: 101.33px; box-sizing: border-box; border: 2.67px solid transparent; border-radius: 7.2px; }
+.bt-set-card--focused { border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; }
+.bt-set-box { position: relative; height: 100%; border-radius: 7.2px; background: #26262c; color: #efeff1; }
+.bt-set-card--focused .bt-set-box { background: #e6e6ea; color: #0e0e10; }
+.bt-set-icon { position: absolute; left: 22.67px; top: 21.33px; width: 46px; height: 49.07px; }
+.bt-set-icon svg, .bt-sign-qr svg, .bt-fol-pic svg, .bt-err-pic svg { display: block; width: 100%; height: 100%; }
+.bt-set-title, .bt-set-value { position: absolute; top: 19.33px; font-size: 21.6px; line-height: 25.92px; font-weight: 600; white-space: nowrap; }
+.bt-set-title { left: 96px; }
+.bt-set-line { position: absolute; left: 96px; right: 168px; top: 51.33px; font-size: 16.8px; line-height: 25.2px; white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; }
+.bt-set-value { right: 32px; top: 35.33px; }
+.bt-set-card--plain .bt-set-title { left: 48px; top: 35.33px; }
+
+.bt-sign-panel { position: absolute; left: 560px; top: 0; width: 720px; height: 720px; background: #efeff1; }
+.bt-sign-qr { position: absolute; left: 24px; top: 24px; width: 672px; height: 672px; }
+
+/* Sign In: the left 560 purple above y 360 and dark below, the OR circle on the line between, the code 64.8 bold */
+.bt-sign-left { position: absolute; left: 0; top: 0; width: 560px; height: 720px; background: #18181b; color: #efeff1; text-align: center;
+                font-weight: 600; }
+.bt-sign-top { height: 360px; background: #5c16c5; }
+.bt-sign-join, .bt-sign-scan, .bt-sign-visit, .bt-sign-code { position: absolute; left: 60px; width: 440px; }
+.bt-sign-join, .bt-sign-visit { font-size: 21.6px; line-height: 32.4px; }
+.bt-sign-join { top: 150px; }
+.bt-sign-scan { top: 206.67px; font-size: 28.8px; line-height: 34.56px; }
+.bt-sign-or { position: absolute; left: 244px; top: 324px; width: 72px; height: 72px; border-radius: 50%; background: #1f1f23; font-size: 18px;
+              line-height: 72px; font-weight: 400; }
+.bt-sign-visit { top: 420px; }
+.bt-sign-code { top: 541.33px; font-size: 64.8px; line-height: 77.76px; font-weight: 700; white-space: nowrap; }
+/* No code yet (or it ended): Twitch's page spinner alone on the page, 39.6 wide in the middle, a 2 px ring with its
+   left quarter light, turning once a second; it fades in (0.15 s) after 1 s, so a quick code never shows it */
+.bt-sign--loading .bt-sign-left, .bt-sign--loading .bt-sign-panel { display: none; }
+.bt-sign-spin { display: none; position: absolute; left: 626.8px; top: 346.8px; width: 26.4px; height: 26.4px; box-sizing: border-box;
+                border: 1.34px solid rgba(83, 83, 95, .48); border-left-color: #efeff1; border-radius: 50%; opacity: 0;
+                -webkit-animation: bt-sign-spin 1s linear infinite, bt-sign-in .15s ease 1s forwards;
+                animation: bt-sign-spin 1s linear infinite, bt-sign-in .15s ease 1s forwards; }
+.bt-sign--loading .bt-sign-spin { display: block; }
+@-webkit-keyframes bt-sign-spin { to { -webkit-transform: rotate(360deg); } }
+@keyframes bt-sign-spin { to { transform: rotate(360deg); } }
+@-webkit-keyframes bt-sign-in { to { opacity: 1; } }
+@keyframes bt-sign-in { to { opacity: 1; } }
+
+/* Following without follows: the card in the hero's place (#18181b, 1184 x 111.33 at y 132), the first row's title at
+   y 291.33, the row under it fading out below */
+.bt-fol-head { position: absolute; left: 0; top: 0; width: 1280px; height: 291.33px; z-index: 2; background: #0e0e10; }
+.bt-fol-card { position: absolute; left: 48px; top: 132px; width: 1184px; height: 111.33px; border-radius: 7.2px; background: #18181b; color: #efeff1; }
+.bt-fol-pic { position: absolute; left: 22px; top: 22px; width: 68px; height: 68px; }
+.bt-fol-title, .bt-fol-line { position: absolute; left: 111.33px; white-space: nowrap; }
+.bt-fol-title { top: 26.67px; font-size: 21.6px; line-height: 32.4px; font-weight: 600; }
+.bt-fol-line { top: 59.33px; font-size: 16.8px; line-height: 25.2px; }
+.bt-fol--empty .bt-home-fade { top: 585.33px; height: 134.67px;
+                               background: linear-gradient(rgba(14, 14, 16, 0), rgba(14, 14, 16, .524) 66px, rgba(14, 14, 16, .95) 108px, #0e0e10 120px); }
+
+/* The error pages: page not found's heading centred at y 303.33 over Home; not playable's picture at the left and
+   its text at x 690 on #18181b; parental controls' picture and its heading and reason at x 278.67 */
+.bt-err { background: #0e0e10; color: #efeff1; }
+.bt-err--not-found { box-sizing: border-box; padding-top: 303.33px; text-align: center; }
+.bt-err-title { font-size: 28.8px; line-height: 34.56px; font-weight: 600; }
+.bt-err--not-found .bt-err-title { margin-bottom: 36px; }
+.bt-err-pic { position: absolute; }
+.bt-err-text { position: absolute; }
+.bt-err--not-playable { background: #18181b; }
+.bt-err--not-playable .bt-err-pic { left: 110px; top: 180px; width: 360px; height: 360px; }
+.bt-err--not-playable .bt-err-text { left: 690px; top: 325.33px; width: 530px; font-size: 28.8px; line-height: 34.56px; font-weight: 600; }
+.bt-err--parental .bt-err-pic { left: 36px; top: 271.33px; width: 170.67px; height: 170.67px; }
+.bt-err--parental .bt-err-text { left: 278.67px; top: 319.33px; width: 965.33px; }
+.bt-err-line { font-size: 15.6px; line-height: 23.4px; }

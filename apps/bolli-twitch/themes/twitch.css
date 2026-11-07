@@ -1,0 +1,55 @@
+/* Bolli Twitch's base: the look of Twitch's TV app (measured at 1920x1080, where its 1280x720 design is drawn at
+   1.5x). The page zoom draws these 1280x720 units at the real viewport, so a measured 1920 px value / 1.5 is the value
+   here. Chrome 38 has no CSS variables: the colours below are the set the other sheets use.
+     page #0e0e10 · panels #18181b, #1f1f23 · cards #26262c (focused #e6e6ea) · titles #efeff1 · tile text #dedee3
+     secondary #adadb8 · focus ring #772ce8 · progress #a970ff · sign-in panel #5c16c5 · LIVE #eb0400
+     LIVE NOW and viewer counts #ff8280 · buttons rgba(255,255,255,.16)
+   Sizes (Twitch's 18 px base is 12 here): text 16.8 titles and menu, 15.6 secondary, 14.4 small lines, 21.6 hero
+   titles and names, 28.8 page headings · corners 7.2 (LIVE badge 4.8, viewers 2.4) · focus ring 3 outside a
+   2.67 border in the page colour · side margins 48 · slides .1s ease-in-out. */
+
+/* Inter 4 (Fontsource 5.3.0, SIL Open Font License: fonts/Inter-LICENSE.txt), the cut Twitch's TV app draws, as one
+   file per weight (Chrome 38 cannot draw variable fonts), as WOFF (the TV's browser fails on WOFF2); the extended
+   Latin set loads only when a text needs it */
+@font-face { font-family: 'Inter'; font-weight: 400; src: url(fonts/inter-latin-400-normal.woff) format('woff');
+             unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-weight: 400; src: url(fonts/inter-latin-ext-400-normal.woff) format('woff');
+             unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-weight: 600; src: url(fonts/inter-latin-600-normal.woff) format('woff');
+             unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-weight: 600; src: url(fonts/inter-latin-ext-600-normal.woff) format('woff');
+             unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-weight: 700; src: url(fonts/inter-latin-700-normal.woff) format('woff');
+             unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-weight: 700; src: url(fonts/inter-latin-ext-700-normal.woff) format('woff');
+             unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+
+html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; background: #0e0e10; color: #efeff1;
+             font-family: 'Inter', sans-serif; font-size: 12px; -webkit-font-smoothing: antialiased; cursor: none; }
+#video { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; background: #000; visibility: hidden; }
+#app, #player { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; }
+#toast { position: absolute; left: 0; right: 0; bottom: 32px; text-align: center; pointer-events: none; }
+
+/* The top menu (every page): items 43.2 tall at y 62.67, centred, 24 apart; the logo (over a page Go Back) at 96,
+   the gear at 1138.
+   Focus: the light box in a page-coloured border with the purple ring; the current page's item is lit. Buttons
+   (Try Again) look the same, lit by default. */
+.bt-stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
+.bt-menu { position: absolute; left: 0; top: 62.67px; width: 1280px; height: 43.2px; z-index: 3; }
+.bt-menu-logo { position: absolute; left: 96px; top: -12px; width: 60px; height: 60px; background: url(../logo.webp) center / contain no-repeat; }
+.bt-menu-items { position: absolute; left: 0; top: 0; width: 1280px; text-align: center; white-space: nowrap; font-size: 0; }
+.bt-menu-item, .bt-button { display: inline-block; vertical-align: top; box-sizing: border-box; height: 43.2px; padding: 0 12px;
+                            border: 2.67px solid transparent; border-radius: 7.2px; font-size: 16.8px; line-height: 37.86px; font-weight: 600; color: #dedee3; }
+.bt-menu-item { margin: 0 12px; }
+.bt-menu-item.bt-current, .bt-button { background: rgba(255, 255, 255, .16); }
+.bt-menu-item.bt-focused, .bt-button.bt-focused { background: #fff; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; color: #1f1f23; }
+.bt-menu-gear { position: absolute; left: 1138px; top: 0; margin: 0; padding: 0 6px; }
+.bt-menu-gear svg { display: block; width: 28.8px; height: 28.8px; margin-top: 4px; }
+/* Go Back over a page, in place of the logo (pages.css: its chevron) */
+.bt-menu-back { position: absolute; left: 96px; top: 0; margin: 0; }
+
+/* The offline screen over the app, in the look of Twitch's error pages: a heading centred at y 303, a line under it */
+.bt-offline { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; box-sizing: border-box; padding-top: 303.33px; z-index: 10;
+              background: #0e0e10; text-align: center; }
+.bt-offline-title { font-size: 28.8px; line-height: 34.56px; font-weight: 600; color: #efeff1; }
+.bt-offline-text { font-size: 15.6px; line-height: 23.4px; color: #efeff1; }

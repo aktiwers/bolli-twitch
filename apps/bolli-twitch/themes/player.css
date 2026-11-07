@@ -1,0 +1,127 @@
+/* Bolli Twitch: the players and their options page (see twitch.css for the colours and sizes). Measured on Twitch's
+   TV app at 1920x1080; every value here is that / 1.5. The app's one video lies under the screen: the player is clear
+   where the picture shows (960 wide beside the chat, else 1280). */
+
+.bt-pl { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
+.bt-pl-box { position: absolute; left: 0; top: 0; width: 960px; height: 720px; }
+.bt-pl--vod .bt-pl-box, .bt-pl--clip .bt-pl-box, .bt-pl--chatless .bt-pl-box { width: 1280px; }
+/* Paused: the big play sign in the picture's middle, over the overlay's shade (also with the overlay hidden) */
+.bt-pl-play { display: none; position: absolute; left: 50%; top: 50%; z-index: 2; width: 80px; height: 80px; margin: -40px 0 0 -40px; }
+.bt-pl-play svg { display: block; width: 100%; height: 100%; }
+.bt-pl--paused .bt-pl-play { display: block; }
+.bt-pl--seeking .bt-pl-play { display: none; }
+/* Waiting for the picture: a ring turning in the picture's middle */
+.bt-pl-spin { display: none; position: absolute; left: 50%; top: 50%; z-index: 2; width: 42.67px; height: 42.67px; margin: -21.33px 0 0 -21.33px;
+              box-sizing: border-box; border: 4px solid rgba(255, 255, 255, .16); border-top-color: #a970ff; border-radius: 50%;
+              -webkit-animation: bt-pl-spin .8s linear infinite; animation: bt-pl-spin .8s linear infinite; }
+.bt-pl--loading .bt-pl-spin { display: block; }
+@-webkit-keyframes bt-pl-spin { to { -webkit-transform: rotate(360deg); } }
+@keyframes bt-pl-spin { to { transform: rotate(360deg); } }
+
+/* The overlay: fades in and out with its last key, the shade over the picture with it (Twitch's, from 40% black at
+   the top to black near the bottom) */
+.bt-pl-controls { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; z-index: 1; opacity: 1;
+                  -webkit-transition: opacity .25s ease-in-out; transition: opacity .25s ease-in-out; }
+.bt-pl--idle .bt-pl-controls { opacity: 0; }
+.bt-pl-shade { position: absolute; left: 0; top: 0; width: 960px; height: 720px; background: linear-gradient(rgba(0, 0, 0, .4) 0%, #000 88.43%); }
+.bt-pl--vod .bt-pl-shade, .bt-pl--clip .bt-pl-shade, .bt-pl--chatless .bt-pl-shade { width: 1280px; }
+.bt-pl-back { position: absolute; left: 48px; top: 36px; }
+
+/* The channel: avatar (LIVE under it), name, title, and game | uptime | viewers (or date | views) */
+.bt-pl-info { position: absolute; left: 48px; top: 578px; height: 78px; }
+.bt-pl--vod .bt-pl-info { top: 572px; }
+.bt-pl--clip .bt-pl-info { top: 584px; }
+.bt-pl-avatar { position: absolute; left: 0; top: 0; width: 78px; height: 78px; }
+.bt-pl-avatar-img { display: block; width: 78px; height: 78px; box-sizing: border-box; border: 2.67px solid #0e0e10; border-radius: 50%; background: #0e0e10; }
+.bt-pl-status { position: absolute; left: 13.33px; top: 61.33px; border: 2.67px solid #0e0e10; }
+.bt-pl-live { width: 46px; height: 23.33px; border-radius: 4.8px; background: #eb0400; color: #fff; font-size: 15.6px; font-weight: 600;
+              line-height: 23.33px; text-align: center; }
+.bt-pl--vod .bt-pl-status, .bt-pl--clip .bt-pl-status { left: 36.67px; top: 84.67px; width: 0; height: 0; }
+.bt-pl-lines { position: absolute; left: 102px; top: 8px; max-width: 551.33px; white-space: nowrap; }
+.bt-pl--chatless .bt-pl-lines { max-width: 871.33px; }
+.bt-pl--vod .bt-pl-lines { max-width: 908.67px; }
+.bt-pl--clip .bt-pl-lines { max-width: 840.67px; }
+.bt-pl-name, .bt-pl-title { overflow: hidden; text-overflow: ellipsis; font-size: 16.8px; font-weight: 700; line-height: 20px; color: #efeff1; }
+.bt-pl-meta { overflow: hidden; text-overflow: ellipsis; font-size: 14.4px; line-height: 21.33px; color: #adadb8; }
+.bt-pl-sep { padding: 0 4.6px; }
+.bt-pl-viewers { color: #ff8280; }
+/* The avatar focused: the white bubble in place of the lines */
+.bt-pl-bubble { display: none; position: absolute; left: 102px; top: 5.33px; padding: 12px; border-radius: 6px; background: #efeff1;
+                color: #0e0e10; white-space: nowrap; }
+.bt-pl-bubble:before { content: ''; position: absolute; left: -12px; top: 50%; margin-top: -13.33px; border-right: 12px solid #efeff1;
+                       border-top: 13.33px solid transparent; border-bottom: 13.33px solid transparent; }
+.bt-pl-bubble-name { font-size: 16.8px; font-weight: 700; line-height: 20px; }
+.bt-pl-bubble-text { font-size: 15.6px; line-height: 23.33px; }
+.bt-pl--avatar .bt-pl-bubble { display: block; }
+.bt-pl--avatar .bt-pl-lines { display: none; }
+
+/* The buttons at the right: Follow above the icon buttons (options, quality, chat), 320 further right without chat */
+.bt-pl-follow { position: absolute; left: 786px; top: 561.33px; }
+.bt-pl-icon { position: absolute; top: 628.67px; width: 46px; padding: 0; }
+.bt-button.bt-pl-icon { background: transparent; }
+.bt-button.bt-pl-icon.bt-focused { background: #fff; }
+.bt-pl-icon svg { display: block; width: 28.67px; height: 28.67px; margin: 4.67px auto 0; }
+.bt-pl-options { left: 713.33px; }
+.bt-pl-gear { left: 784px; }
+.bt-pl-chat { left: 854px; }
+.bt-pl--chatless .bt-pl-follow { left: 1106px; }
+.bt-pl--chatless .bt-pl-options { left: 1033.33px; }
+.bt-pl--chatless .bt-pl-gear { left: 1104px; }
+.bt-pl--chatless .bt-pl-chat { left: 1174px; }
+.bt-pl--vod .bt-pl-follow { left: 1106px; top: 549.33px; }
+.bt-pl--vod .bt-pl-options { left: 1104px; }
+.bt-pl--vod .bt-pl-gear { left: 1174px; }
+.bt-pl--clip .bt-pl-full { position: absolute; left: 1054.67px; top: 573.33px; }
+.bt-pl--clip .bt-pl-options { left: 1036px; }
+.bt-pl--clip .bt-pl-follow { left: 1106px; top: 628.67px; }
+
+/* The track: bar, purple part, knob with the time under it, the length at the end */
+.bt-pl-track { position: absolute; left: 48px; top: 483.33px; width: 1184px; height: 24px; display: -webkit-flex; display: flex;
+               -webkit-align-items: center; align-items: center; }
+.bt-pl--clip .bt-pl-track { top: 507.33px; }
+.bt-pl-bar { position: relative; -webkit-flex: 1; flex: 1; height: 6px; background: rgba(255, 255, 255, .08); }
+.bt-pl-fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #a970ff; -webkit-transform-origin: 0 0; transform-origin: 0 0; }
+.bt-pl-mover { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.bt-pl-knob { position: absolute; left: -12px; top: -9px; width: 24px; height: 24px; box-sizing: border-box; border: 2.67px solid #000;
+              border-radius: 50%; background: #fff; }
+.bt-pl-knob.bt-focused { box-shadow: 0 0 0 3px #772ce8; }
+.bt-pl-elapsed { position: absolute; left: -50px; top: 21.33px; width: 100px; text-align: center; font-size: 15.6px; line-height: 23.33px; color: #efeff1; }
+.bt-pl-total { margin-left: 24px; font-size: 15.6px; line-height: 23.33px; color: #efeff1; white-space: nowrap; }
+
+/* The quality menu over the gear */
+.bt-pl-quality { position: absolute; left: 807px; bottom: 101.33px; padding: 12px; border-radius: 7.2px; background: #18181b;
+                 box-shadow: 0 2.67px 5.33px rgba(0, 0, 0, .4), 0 0 2.67px rgba(0, 0, 0, .4); white-space: nowrap;
+                 -webkit-transform: translateX(-50%); transform: translateX(-50%); }
+.bt-pl--chatless .bt-pl-quality { left: 1127px; }
+.bt-pl--vod .bt-pl-quality { left: 1197px; }
+.bt-pl-quality-item { position: relative; min-width: 103.33px; height: 43.33px; box-sizing: border-box; padding: 0 22px; border: 2.67px solid transparent;
+                      border-radius: 7.2px; font-size: 16.8px; font-weight: 600; line-height: 38px; text-align: center; color: #dedee3; }
+.bt-pl-quality-item.bt-focused { background: #fff; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; color: #1f1f23; }
+.bt-pl-quality-check { display: none; position: absolute; left: 4px; top: 10.67px; width: 16px; height: 16px; }
+.bt-pl-quality-check svg { display: block; width: 100%; height: 100%; }
+.bt-pl-quality-item--picked .bt-pl-quality-check { display: block; }
+
+/* Twitch's prompts over the screen: a picture left, the heading, lines and buttons centred right */
+.bt-pl-prompt { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; z-index: 5; background: #18181b; }
+.bt-pl-prompt-picture { position: absolute; left: 81.67px; top: 174px; width: 433.33px; height: 433.33px; }
+.bt-pl-prompt-picture svg { display: block; width: 100%; height: 100%; }
+.bt-pl-prompt-cta { position: absolute; left: 740.67px; top: 0; width: 500px; height: 720px; display: -webkit-flex; display: flex;
+                    -webkit-flex-direction: column; flex-direction: column; -webkit-justify-content: center; justify-content: center; }
+.bt-pl-prompt-title { font-size: 28.8px; font-weight: 600; line-height: 34.67px; color: #efeff1; }
+.bt-pl-prompt-line { font-size: 15.6px; line-height: 19.33px; color: #efeff1; }
+.bt-pl-prompt-strong { font-size: 16.8px; font-weight: 600; line-height: 20px; }
+.bt-pl-prompt-buttons { margin-top: 12px; font-size: 0; white-space: nowrap; }
+.bt-pl-prompt-buttons .bt-button + .bt-button { margin-left: 6px; }
+.bt-pl--gate .bt-pl-prompt-buttons .bt-button + .bt-button { margin-left: 0; }
+
+/* The options page: the rows under the top menu's Go Back */
+.bt-opt { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; background: #0e0e10; }
+.bt-opt-rows { position: absolute; left: 48px; top: 174px; width: 1184px; }
+.bt-opt-row { position: relative; height: 101.33px; box-sizing: border-box; border: 2.67px solid transparent; border-radius: 7.2px;
+              background: #26262c; background-clip: padding-box; color: #efeff1; }
+.bt-opt-row.bt-focused { border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; background: #e6e6ea; color: #0e0e10; }
+.bt-opt-icon { position: absolute; left: 27.33px; top: 26.67px; width: 40px; height: 40px; }
+.bt-opt-icon svg, .bt-opt-next svg { display: block; width: 100%; height: 100%; }
+.bt-opt-title { position: absolute; left: 96px; top: 19.33px; font-size: 21.6px; font-weight: 600; line-height: 25.92px; white-space: nowrap; }
+.bt-opt-text { position: absolute; left: 96px; top: 51.33px; font-size: 16.8px; line-height: 25.2px; white-space: nowrap; }
+.bt-opt-next { position: absolute; right: 25.33px; top: 28px; width: 40px; height: 40px; }

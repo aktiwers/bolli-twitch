@@ -1,0 +1,54 @@
+/* Bolli Twitch: a channel's page (colours and sizes: twitch.css). Measured at 1920x1080 in Twitch's TV app, written
+   / 1.5. The page lies over the app's one video and is clear where the preview plays; it makes no stacking context
+   of its own, so its Unfollow question covers the top menu too. */
+.bt-ch { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; }
+
+/* The rows: the focused row's title at 300 (450 at 1920), 156 lower while the header is whole (684); going down
+   they move up .1 s after the header starts to fade, going up they move down .2 s with it */
+.bt-ch-rows { position: absolute; left: 0; top: 0; width: 1280px; -webkit-transition: -webkit-transform .2s ease-out; }
+.bt-ch--rows .bt-ch-rows { -webkit-transition: -webkit-transform .1s ease-out .1s; }
+/* Over the row under the focused one: the page colour from 30% of it down, at .7 */
+.bt-ch-fade { position: absolute; left: 0; width: 1280px; height: 294px; z-index: 2; opacity: .7;
+              background: linear-gradient(rgba(14, 14, 16, 0), #0e0e10 30%); }
+
+/* With focus in the rows the header shrinks to its top 300: the band (over the rows) and the veil (the preview's
+   part below 300, under the rows) cover the video while the rest of the header fades out, .25 s */
+.bt-ch-band { position: absolute; left: 0; top: 0; width: 1280px; height: 300px; background: #0e0e10; opacity: 0; }
+.bt-ch-veil { position: absolute; left: 868.67px; top: 300px; width: 351.33px; height: 66px; background: #0e0e10; opacity: 0; }
+/* Out of sight they are hidden once the fade ends, not only see-through: the TV takes opaque layers over the video as
+   covering it even at opacity 0 and stops drawing its frames (the box showed a still picture while the sound played) */
+.bt-ch-band, .bt-ch-veil { visibility: hidden; -webkit-transition: opacity .25s ease-in-out, visibility 0s linear .25s; }
+.bt-ch-more { -webkit-transition: opacity .25s ease-in-out; }
+.bt-ch--rows .bt-ch-band, .bt-ch--rows .bt-ch-veil { opacity: 1; visibility: visible; -webkit-transition: opacity .25s ease-in-out, visibility 0s; }
+.bt-ch--rows .bt-ch-more { opacity: 0; }
+
+/* The header: avatar 76.67 round at 60,168; LIVE NOW (red) or OFFLINE (grey), the name, followers; "About <name>:"
+   and up to four lines of description; Follow and Report at y 388 (268.67 without a description) */
+.bt-ch-head, .bt-ch-more { position: absolute; left: 0; top: 0; width: 1280px; height: 0; }
+.bt-ch-avatar { position: absolute; left: 60px; top: 168px; width: 76.67px; height: 76.67px; border-radius: 50%;
+                image-rendering: -webkit-optimize-contrast; }
+.bt-ch-status, .bt-ch-name, .bt-ch-followers, .bt-ch-about-title, .bt-ch-about { position: absolute; left: 160.67px; width: 624px; }
+.bt-ch-status, .bt-ch-name, .bt-ch-followers, .bt-ch-about-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-ch-status { top: 168px; font-size: 15.6px; line-height: 23.4px; font-weight: 500; color: #adadb8; }
+.bt-ch-status--live { color: #eb0400; }
+.bt-ch-name { top: 191.33px; font-size: 21.6px; line-height: 25.92px; font-weight: 600; color: #efeff1; }
+.bt-ch-followers { top: 217.33px; font-size: 14.4px; line-height: 21.6px; color: #adadb8; }
+.bt-ch-about-title, .bt-ch-about { font-size: 14.4px; line-height: 21.6px; color: #efeff1; }
+.bt-ch-about-title { top: 250.67px; font-weight: 600; }
+.bt-ch-about { top: 284.67px; max-height: 86.4px; overflow: hidden; word-wrap: break-word;
+               display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+.bt-ch-buttons { position: absolute; left: 160.67px; top: 388px; white-space: nowrap; font-size: 0; }
+.bt-ch-more--plain .bt-ch-buttons { top: 268.67px; }
+/* Follow (114 wide) and Report 6 apart */
+.bt-ch-button { margin-right: 6px; }
+.bt-ch-watch { position: absolute; left: 868.67px; top: 384px; margin: 0; }
+
+/* The preview box 351.33x198 at 868.67,168, clear while the video plays under it: LIVE and the viewers, or the
+   newest video's date, views and length; a gated one shows "Just one second..." at its bottom left */
+.bt-ch-preview { position: absolute; left: 868.67px; top: 168px; width: 351.33px; height: 198px; background: #18181b; }
+.bt-ch-preview--playing { background: transparent; }
+.bt-ch-preview .bt-ch-date { top: 12px; bottom: auto; }
+.bt-ch-gate { position: absolute; left: 24px; right: 24px; bottom: 24px; color: #efeff1; }
+.bt-ch-gate-title { font-size: 21.6px; line-height: 32.4px; font-weight: 600; }
+.bt-ch-gate-text { margin-top: 6px; font-size: 15.6px; line-height: 23.4px; }
+.bt-ch-none { position: absolute; left: 0; top: 87.33px; width: 351.33px; text-align: center; font-size: 15.6px; line-height: 23.4px; color: #efeff1; }

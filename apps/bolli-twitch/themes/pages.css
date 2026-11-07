@@ -1,0 +1,75 @@
+/* Bolli Twitch: what several screens share (colours and sizes: twitch.css). Measured at 1920x1080 in Twitch's TV app,
+   written / 1.5. */
+
+/* Buttons with an icon (Follow, Report, Watch): Twitch's 28.8 icon box after a padding of 10, 5.87 before the label;
+   Go Back (the menu's and the player's) sits 9.33 in, 6.53 before its label */
+.bt-icon-button { padding: 0 12px 0 10px; }
+.bt-button-icon { display: inline-block; vertical-align: top; width: 28.8px; height: 28.8px; margin: 4.67px 5.87px 0 0; }
+.bt-button-icon svg { display: block; width: 100%; height: 100%; }
+.bt-back { padding: 0 12px 0 9.33px; }
+.bt-back .bt-button-icon { margin: 4px 6.53px 0 0; }
+.bt-button--plain { background: transparent; }
+.bt-button--plain.bt-focused { background: #fff; }
+.bt-button--destructive.bt-focused { background: #ff4f4d; color: #000; }
+
+/* What a list shows when it has nothing: a heading and a line centred across the screen, Try Again under them when
+   it failed. Its places: a whole page's (Home, Following, Browse), a channel's under its header, a category's under
+   its buttons (its single line in the bigger text), Search's where Twitch's results page has its heading */
+.bt-state { position: absolute; left: 0; width: 1280px; z-index: 2; text-align: center; color: #efeff1; }
+.bt-state-title { font-size: 28.8px; line-height: 34.56px; font-weight: 600; }
+.bt-state-line { font-size: 15.6px; line-height: 23.4px; }
+.bt-state .bt-button { margin-top: 36px; }
+.bt-state--page { top: 303.33px; }
+.bt-state--channel { top: 360px; }
+.bt-state--category { top: 524px; }
+.bt-state--category .bt-state-line { font-size: 21.6px; line-height: 32.4px; }
+.bt-state--search { top: 168px; }
+
+/* Twitch's question box over the dimmed screen and menu: a panel 720 wide in the middle, the title and the line at
+   its left, the buttons under them (no background until focused) */
+.bt-modal { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; z-index: 6; background: rgba(0, 0, 0, .85);
+            display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center; -webkit-justify-content: center;
+            justify-content: center; }
+.bt-modal-panel { width: 720px; border-radius: 7.2px; background: #18181b; color: #efeff1;
+                  box-shadow: 0 21.33px 42.67px rgba(0, 0, 0, .6), 0 0 10.67px rgba(0, 0, 0, .4); }
+.bt-modal-title { padding: 24px 12px 7.44px 36px; font-size: 28.8px; line-height: 34.56px; font-weight: 600; }
+.bt-modal-text { padding: 24px 36px; font-size: 15.6px; line-height: 23.4px; }
+.bt-modal-buttons { margin: 24px; font-size: 0; white-space: nowrap; }
+.bt-modal-buttons .bt-button + .bt-button { margin-left: 12px; }
+
+/* Twitch's QR pages: the dark left 560 with the picture, the title, what to do and the reports' address centred, the
+   light right 720 with the code 672 wide 24 from its edges. Cookies has a bigger picture and its text in three lines
+   at most; the chat page places its own Go Back, a bigger picture and its words */
+.bt-qr { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; background: #efeff1; }
+.bt-qr-side { position: absolute; left: 0; top: 0; width: 560px; height: 720px; box-sizing: border-box; padding-bottom: 12px; background: #18181b;
+              display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column; -webkit-justify-content: center;
+              justify-content: center; -webkit-align-items: center; align-items: center; text-align: center; color: #efeff1; font-weight: 600; }
+.bt-qr-pic { width: 512px; height: 180px; }
+.bt-qr-pic svg, .bt-qr-code svg { display: block; width: 100%; height: 100%; }
+.bt-qr-title { width: 560px; margin-top: 24px; font-size: 28.8px; line-height: 34.56px; }
+.bt-qr-text { width: 488px; margin-top: 36px; font-size: 21.6px; line-height: 32.4px; }
+.bt-qr-address { padding-top: 36px; }
+.bt-qr-panel { position: absolute; left: 560px; top: 0; width: 720px; height: 720px; }
+.bt-qr-code { position: absolute; left: 24px; top: 24px; width: 672px; height: 672px; }
+.bt-qr--tall .bt-qr-side { padding-bottom: 0; }
+.bt-qr--tall .bt-qr-pic { width: 416px; height: 324px; }
+.bt-qr--tall .bt-qr-title { width: 464px; line-height: 34.67px; }
+.bt-qr--tall .bt-qr-text { width: 323.33px; max-height: 78px; margin-top: 24px; line-height: 26px; overflow: hidden; word-wrap: break-word;
+                           display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.bt-qr--join .bt-qr-side { display: block; padding: 0; }
+.bt-qr-back { position: absolute; left: 48px; top: 48px; }
+.bt-qr--join .bt-qr-pic { position: absolute; left: 106.67px; top: 140px; width: 326.67px; height: 300px; }
+.bt-qr--join .bt-qr-title { position: absolute; left: 36px; top: 466px; width: 464px; margin: 0; line-height: 34.67px; }
+.bt-qr--join .bt-qr-text { position: absolute; left: 106.67px; top: 524.67px; width: 323.33px; margin: 0; line-height: 26px; }
+
+/* Twitch's "Are you sure?" page: the picture in the left half of a box centred under the menu, the question at its
+   right */
+.bt-ni { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; background: #0e0e10; }
+.bt-ni-box { position: absolute; left: 160px; top: 120px; width: 960px; height: 600px; display: -webkit-flex; display: flex;
+             -webkit-align-items: center; align-items: center; }
+.bt-ni-pic { width: 360px; height: 600px; padding-right: 120px; }
+.bt-ni-pic svg { display: block; width: 100%; height: 100%; }
+.bt-ni-text { width: 480px; color: #efeff1; }
+.bt-ni-title { font-size: 43.2px; line-height: 51.84px; font-weight: 700; }
+.bt-ni-line { margin-top: 12px; font-size: 16.8px; line-height: 25.2px; }
+.bt-ni-buttons { padding-top: 23.33px; font-size: 0; white-space: nowrap; }

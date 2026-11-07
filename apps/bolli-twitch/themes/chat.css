@@ -1,0 +1,44 @@
+/* Bolli Twitch: chat (see twitch.css for the colours and sizes). The live player's chat panel as Twitch's TV app draws
+   it (measured at 1920x1080, here / 1.5): 320 wide at x 960, rows from the top, then from the bottom over "Join the
+   conversation" once they fill it. A row:
+   padding 6 12 6 6, 15.6 Inter, badges 18 and emotes 28.8 centred on the line as Twitch's (vertical-align middle), the
+   name bold in its colour with a colon. Notices on the lighter band, status lines grey. */
+
+.bt-chat { position: absolute; left: 960px; top: 0; width: 320px; height: 720px; overflow: hidden; background: #18181b; }
+/* The rows slide under the top edge's fade (Twitch layers two of them) */
+.bt-chat-fade { position: absolute; left: 0; top: 0; width: 320px; height: 24px;
+                background: linear-gradient(to top, rgba(0, 0, 0, 0), #18181b), linear-gradient(to top, rgba(0, 0, 0, 0), #18181b); }
+/* The rows' list, a layer of its own: it only grows downward and panel.ts moves it so its rows start 12 from the top,
+   or once they fill the panel end on the Join band's top (652.8), so a draw paints only the rows it adds. Its own
+   background, a panel's height past the rows on both sides, keeps the text drawn as on the page and its edges outside
+   the rows' clip; the clip ends where the band starts, so the band stays on the page's layer */
+.bt-chat-rows { position: absolute; left: 0; top: 0; width: 320px; height: 652.8px; overflow: hidden; }
+.bt-chat-list { position: absolute; left: 12px; right: 12px; top: 0; padding: 720px 0; background: #18181b;
+                -webkit-transform: translate3d(0, 0, 0); }
+
+.bt-chat-row { padding: 6px 12px 6px 6px; font-size: 15.6px; font-weight: 400; color: #efeff1;
+               white-space: pre-wrap; word-wrap: break-word; }
+.bt-chat-system { display: none; }
+.bt-chat-badge { width: 18px; height: 18px; margin-right: 3px; vertical-align: middle; }
+.bt-chat-name { font-weight: 600; }
+.bt-chat-emote { width: 28.8px; height: 28.8px; vertical-align: middle; }
+.bt-chat-link, .bt-chat-deleted { color: #bf94ff; }
+
+/* A sub or resub: the band, its words grey, the sender's own message under them without badges */
+.bt-chat-row--notice { padding: 6px 24px; background: #26262c; }
+.bt-chat-row--notice .bt-chat-system { display: block; color: #adadb8; }
+.bt-chat-row--bare .bt-chat-line { display: none; }
+
+/* Status lines (bans, timeouts, a drop) grey; the welcome, a status line too, has a divider under it */
+.bt-chat-row--status .bt-chat-line { color: #adadb8; }
+.bt-chat-row--welcome { margin-bottom: 12px; }
+.bt-chat-row--welcome .bt-chat-line { padding: 36px 0; border-bottom: 2.67px solid #26262c; }
+
+/* Join the conversation (opens the phone QR panel), in the band under the rows (67.2: 12 above and below it, 24 at its
+   sides); only the button has a box there, clear of the rows' layer */
+.bt-chat-foot { position: absolute; left: 36px; bottom: 12px; width: 248px; }
+.bt-chat-join { display: flex; align-items: center; justify-content: center; height: 43.2px; box-sizing: border-box;
+                border: 2.67px solid transparent; border-radius: 7.2px; background: rgba(255, 255, 255, .16); color: #dedee3; }
+.bt-chat-join-icon { width: 14.4px; height: 20.13px; margin: 4.33px 13.2px 4.33px 16.8px; fill: currentColor; }
+.bt-chat-join-label { padding-right: 12px; font-size: 16.8px; font-weight: 600; line-height: 25.2px; white-space: nowrap; }
+.bt-chat-join.bt-focused { background: #fff; color: #1f1f23; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; }

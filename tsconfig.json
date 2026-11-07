@@ -1,0 +1,18 @@
+{
+    // The apps run in webOS 3.x's WebAppMgr (Chrome 38): ES5 syntax only.
+    // Chrome 38 has Promise, Map and Set natively, so their typings are allowed;
+    // nothing else from ES2015+ (no polyfill bundle on purpose).
+    "compilerOptions": {
+        "target": "ES5",
+        "module": "ES2015",
+        "lib": ["ES5", "DOM", "ES2015.Promise", "ES2015.Collection"],
+        "strict": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUnusedLocals": true,
+        "moduleResolution": "node",
+        "outDir": "build/tsc",
+        "rootDir": "."
+    },
+    "include": ["src/**/*.ts"]
+}

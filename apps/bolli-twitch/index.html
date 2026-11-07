@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Bolli Twitch</title>
+<script>
+  // Layout is written in 1280x720 units; draw it at the real viewport (1920x1080)
+  document.documentElement.style.zoom = Math.max(1, window.innerWidth / 1280);
+</script>
+<link rel="stylesheet" href="themes/twitch.css">
+<link rel="stylesheet" href="themes/home.css">
+<link rel="stylesheet" href="themes/pages.css">
+<link rel="stylesheet" href="themes/player.css">
+<link rel="stylesheet" href="themes/channel.css">
+<link rel="stylesheet" href="themes/account.css">
+<link rel="stylesheet" href="themes/browse.css">
+<link rel="stylesheet" href="themes/chat.css">
+</head>
+<body>
+<video id="video" autoplay></video>
+<div id="app"></div>
+<div id="player"></div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
