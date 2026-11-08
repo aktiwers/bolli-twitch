@@ -23,7 +23,7 @@ import { noteStall, noteZap } from '../../core/perf.js';
 import { load, save } from '../../core/store.js';
 import { releaseVideo } from '../../player/video.js';
 import { clip } from '../api/clip.js';
-import { GqlError } from '../api/gql.js';
+import { GqlError, signedIn } from '../api/gql.js';
 import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, UsherVersion } from '../api/playback.js';
 import { aheadOf, Engine, EngineEvents, Failure, FailureKind, playVideo, Quality, showVideo, Source } from './engine.js';
 import { firstDateOnly, mediaSourcePlays, parseQualities } from './master.js';
@@ -136,7 +136,7 @@ interface UsherError {
 /** What a failure means: the failure to tell, or a step to try first; resolve: it came from resolving the stream */
 interface Outcome {
     failure: Failure;
-    next?: 'type' | 'v2' | 'guest';
+    next?: 'type' | 'v2' | 'guest' | 'account';
     resolve?: boolean;
 }
 
@@ -158,6 +158,9 @@ interface Playback {
     usher: UsherVersion;
     triedV2: boolean;
     triedGuest: boolean;
+    /** The token is asked with the account (after a guest's was refused: subscribers only); else as a guest, whose
+     * ad-free player types carry no ads */
+    withAccount: boolean;
     /** Raised by every resolve: answers of an older one are dropped */
     resolving: number;
     /** Raised by every engine start: events of an older run are dropped */
@@ -333,8 +336,8 @@ export function rememberQuality(q: Quality | null): void {
 }
 
 /** Token, master and qualities of a live channel or past broadcast as PLAYER_TYPES[type] through usher */
-function resolveStream(target: Target, type: number, usher: UsherVersion): Promise<Resolved> {
-    return playbackUrl(target.kind as StreamKind, target.id, PLAYER_TYPES[type], usher).then(function (r) {
+function resolveStream(target: Target, type: number, usher: UsherVersion, withAccount?: boolean): Promise<Resolved> {
+    return playbackUrl(target.kind as StreamKind, target.id, PLAYER_TYPES[type], usher, withAccount).then(function (r) {
         return getText(r.url, 10000).then(function (text) {
             return { token: r.token, url: r.url, text: text, qualities: parseQualities(text, r.url) };
         }, function (e: HttpError) {
@@ -398,13 +401,13 @@ export function prefetch(target: Target): Promise<unknown> {
     });
 }
 
-/** The prefetched start of p's target, if it was asked as p's player type and usher version */
+/** The prefetched start of p's target, if it was asked as p's player type and usher version (always as a guest) */
 function takeAhead(p: Playback): Promise<Resolved> | null {
     sweepAhead();
     var k = key(p.target);
     var had = ahead[k];
     delete ahead[k];
-    return had && had.type === p.type && had.usher === p.usher ? had.result : null;
+    return had && had.type === p.type && had.usher === p.usher && !p.withAccount ? had.result : null;
 }
 
 /** Plays target. When it plays already (a preview going full screen) its new owner claims it: only the events and
@@ -439,7 +442,7 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         target: { kind: target.kind, id: target.id, startAt: startAt },
         files: target.files && target.files.length ? target.files : null, events: events, options: opts,
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
-        triedV2: false, triedGuest: false, resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
+        triedV2: false, triedGuest: false, withAccount: false, resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
         startedAt: Date.now(), shown: false, at: startAt || 0, paused: false, left: false, held: false, failed: '', adTimer: 0,
         retryTimer: 0
     };
@@ -529,7 +532,7 @@ function startClip(p: Playback): void {
  * player type before any engine starts */
 function startStream(p: Playback): void {
     var attempt = ++p.resolving;
-    (takeAhead(p) || resolveStream(p.target, p.type, p.usher)).then(function (r) {
+    (takeAhead(p) || resolveStream(p.target, p.type, p.usher, p.withAccount)).then(function (r) {
         if (stale(p, attempt)) {
             return undefined;
         }
@@ -766,7 +769,7 @@ function classify(p: Playback, e: unknown): Outcome {
             return { failure: failure('offline', said) };
         }
         if (s === 403 && u.explained) {
-            return { failure: failure('forbidden', said) };
+            return { failure: failure('forbidden', said), next: accountMay(p) ? 'account' : undefined };
         }
         if (s === 0 || s >= 500) {
             return { failure: failure('network', said) };
@@ -776,9 +779,14 @@ function classify(p: Playback, e: unknown): Outcome {
     }
     var r = e as TokenRefusal;
     if (r && (r.kind === 'offline' || r.kind === 'forbidden')) {
-        return { failure: failure(r.kind, r.detail) };
+        return { failure: failure(r.kind, r.detail), next: r.kind === 'forbidden' && accountMay(p) ? 'account' : undefined };
     }
     return { failure: failure('stream', e instanceof Error ? e.message : String(e)) };
+}
+
+/** Whether a refusal of the guest's token may be asked again with the account (signed in, not tried yet) */
+function accountMay(p: Playback): boolean {
+    return !p.withAccount && signedIn();
 }
 
 /** The policy for a failure: the next step it names, for a missing worker the TV's own player (a past broadcast) or
@@ -798,6 +806,11 @@ function failed(p: Playback, o: Outcome): void {
     if (o.next === 'guest' && !p.triedGuest) {
         p.triedGuest = true;
         restart(p);
+        return;
+    }
+    if (o.next === 'account' && !p.withAccount) {
+        p.withAccount = true;
+        startStream(p);
         return;
     }
     if (o.resolve && p.shown && p.engine && p.playingType !== p.type) {

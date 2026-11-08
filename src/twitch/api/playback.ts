@@ -68,13 +68,15 @@ function refusal(kind: 'offline' | 'forbidden'): TokenRefusal {
     return { kind: kind, detail: 'token: ' + kind };
 }
 
-/** A token for a live channel or a past broadcast (also a highlight or upload) as playerType, for usher version */
-export function playbackToken(kind: StreamKind, id: string, playerType: string, version: UsherVersion): Promise<Token> {
+/** A token for a live channel or a past broadcast (also a highlight or upload) as playerType, for usher version.
+ * Asked as a guest unless withAccount: with a signed-in viewer's token Twitch stitched ads into the ad-free player
+ * types too (seen on the TV), with a guest's it did not; the account is for what a guest may not watch */
+export function playbackToken(kind: StreamKind, id: string, playerType: string, version: UsherVersion, withAccount?: boolean): Promise<Token> {
     var vars: { [name: string]: string } = { id: id, playerType: playerType };
     if (version === 'v1') {
         vars.platform = platform();
     }
-    return gql<{ [field: string]: TokenReply | null }>(tokenQuery(kind, version), vars).then(function (data) {
+    return gql<{ [field: string]: TokenReply | null }>(tokenQuery(kind, version), vars, !withAccount).then(function (data) {
         var reply = data[KINDS[kind].field];
         if (!reply || !reply.value) {
             throw refusal('offline');
@@ -133,8 +135,8 @@ export function masterUrl(kind: StreamKind, id: string, t: Token): string {
 }
 
 /** A token as playerType for usher version, and the master playlist's address it opens */
-export function playbackUrl(kind: StreamKind, id: string, playerType: string, version: UsherVersion): Promise<{ url: string; token: Token }> {
-    return playbackToken(kind, id, playerType, version).then(function (t) {
+export function playbackUrl(kind: StreamKind, id: string, playerType: string, version: UsherVersion, withAccount?: boolean): Promise<{ url: string; token: Token }> {
+    return playbackToken(kind, id, playerType, version, withAccount).then(function (t) {
         return { url: masterUrl(kind, id, t), token: t };
     });
 }

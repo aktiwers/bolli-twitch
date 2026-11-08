@@ -1,6 +1,6 @@
 {
     "id": "org.bolli.twitch",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "vendor": "bolli",
     "type": "web",
     "main": "index.html",

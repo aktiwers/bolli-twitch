@@ -18,9 +18,6 @@
 //   can start) is left out, a third less code for the TV to parse on the main thread. A worker that fails is an hls.js
 //   error (event 'demuxerWorker'): the session then plays on the TV's own player.
 // - Puts hls.js's own worker start (loadWorker) on the bundle, so the app starts the worker once for its whole run.
-// - Probes a segment as MPEG-TS before fMP4 (SOURCE_EDITS): with fMP4 probed first the TV decoded Twitch's TS
-//   streams with square blocks (seen on the TV, live and past broadcasts alike); TS first plays them clean, and fMP4
-//   is still found, as the TS probe needs a run of sync bytes.
 // - Drops hls.js's trace, debug, info and log calls: they build their message strings even with logging off, work on
 //   every fragment, append and playlist on the TV's slow CPU. Warnings and errors stay.
 //
@@ -279,28 +276,11 @@ const options = {
 // project's TypeScript reads such a type as an error, which would type the variable any and hide its calls from
 // the checks below. The source as read here leaves the buffer type out.
 const BUFFER_TYPE = /\b((?:Ui|I)nt(?:8|16|32)Array|Uint8ClampedArray|Float(?:32|64)Array|DataView)<(?:ArrayBuffer|ArrayBufferLike|SharedArrayBuffer)>/g;
-/** Text changes to hls.js's source as it is read (file under src/ -> [find, replace]; each must match once) */
-const SOURCE_EDITS = {
-    'demux/transmuxer.ts': [[
-        '  { demux: MP4Demuxer, remux: PassThroughRemuxer },\n  { demux: TSDemuxer, remux: MP4Remuxer },\n',
-        '  { demux: TSDemuxer, remux: MP4Remuxer },\n  { demux: MP4Demuxer, remux: PassThroughRemuxer },\n'
-    ]]
-};
-function edited(file, text) {
-    const edits = SOURCE_EDITS[path.relative(SRC, path.resolve(file)).split(path.sep).join('/')] || [];
-    for (const [find, replace] of edits) {
-        if (text.split(find).length !== 2) {
-            throw new Error(`${file}: the text to change is not there once`);
-        }
-        text = text.replace(find, replace);
-    }
-    return text;
-}
 const host = ts.createCompilerHost(options);
 const readSource = host.getSourceFile;
 host.getSourceFile = (file, language, onError, create) => {
     if (path.resolve(file).startsWith(SRC + path.sep)) {
-        return ts.createSourceFile(file, edited(file, fs.readFileSync(file, 'utf8')).replace(BUFFER_TYPE, '$1'), language);
+        return ts.createSourceFile(file, fs.readFileSync(file, 'utf8').replace(BUFFER_TYPE, '$1'), language);
     }
     return readSource.call(host, file, language, onError, create);
 };

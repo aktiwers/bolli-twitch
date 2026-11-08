@@ -5911,8 +5911,8 @@ catch (err) {
 now = Date.now;
 }
 var muxConfig = [
-{ demux: TSDemuxer, remux: MP4Remuxer },
 { demux: MP4Demuxer, remux: PassThroughRemuxer },
+{ demux: TSDemuxer, remux: MP4Remuxer },
 { demux: AACDemuxer, remux: MP4Remuxer },
 { demux: MP3Demuxer, remux: MP4Remuxer },
 ];
