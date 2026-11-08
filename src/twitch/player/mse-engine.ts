@@ -5,7 +5,7 @@
 // - the start: Auto lets hls.js pick from the remembered line speed (its default estimate is that speed times the
 //   share a quality may use: bandwidth.ts); a quality the viewer picked is set as it is,
 // - the master and the first media playlist from the session's fetches, live playlists through the session's
-//   filter (ad segments become gaps),
+//   filter (stitched segments become gaps),
 // - fMP4 segments made of low-latency chunks rewritten as one fragment before hls.js gets them (cmaf.ts: the TV's
 //   Media Source fails on the chunks),
 // - TS segments handed to hls.js's converter in parts (its progressive mode), so the first part is appended while
@@ -19,7 +19,7 @@
 // - a quality picked that is taller than a preview's largest height plays as Auto under it,
 // - paused, no loading (live at once; a past broadcast once its buffer is full).
 
-import { aheadOf, Engine, EngineEvents, Failure, hideVideo, playVideo, Source } from './engine.js';
+import { aheadOf, Delay, Engine, EngineEvents, Failure, Fetched, hideVideo, playVideo, Source } from './engine.js';
 import { HlsInstance, HlsStatic, loadHls, whenWorkerFails, workerFailed, workerPath, workerRuns } from './hls-loader.js';
 import { dropPipeline, fits, keepPipeline, releasePipeline, takePipeline, Transfer } from './pipeline.js';
 import { bandwidth, fitQuality, noteBandwidth, pickUnder, SHARE } from './bandwidth.js';
@@ -29,6 +29,9 @@ import { whenKeysRest } from './rest.js';
 
 /** Live playback this far behind the end of the newest segment (Twitch's liveSyncDuration) */
 var LIVE_SYNC_S = 2;
+/** A live media playlist the session fetched is served to hls.js only this soon after (each second older is a second
+ * further behind) */
+var LIVE_LEVEL_MS = 1000;
 /** Buffer ahead: past broadcasts (the TV's memory is small), live (bounded by the newest segment anyway) */
 var VOD_AHEAD_S = 20;
 var LIVE_AHEAD_S = 8;
@@ -55,12 +58,16 @@ export function setHlsDebug(on: boolean): void {
     debug = on;
 }
 
+function hundredths(s: number): number {
+    return Math.round(s * 100) / 100;
+}
+
 /** What the playlist loader serves or changes for one hls.js instance */
 interface Playlists {
     /** Served for the manifest (once) */
     master: { url: string; text: string } | null;
     /** Served for this media playlist (once) */
-    level: { url: string; text: string } | null;
+    level: Fetched | null;
     /** Every media playlist goes through it */
     filter: ((text: string) => string) | null;
     /** A segment fetched ahead: served instead of a fetch when its address is asked (once) */
@@ -334,8 +341,7 @@ export class MseEngine implements Engine {
         });
     }
 
-    private open(Hls: HlsStatic, source: Source, pipe: Transfer | null, level: { url: string; text: string } | null,
-        segment: SegmentAhead | null): void {
+    private open(Hls: HlsStatic, source: Source, pipe: Transfer | null, level: Fetched | null, segment: SegmentAhead | null): void {
         var self = this;
         var video = this.video;
         var E = Hls.Events;
@@ -367,7 +373,9 @@ export class MseEngine implements Engine {
         // Segments to the converter as they come (loadFragment hands TS ones in parts); set after construction, as
         // hls.js's own check for it looks for fetch streaming, which is not in this build
         hls.config.progressive = true;
-        var lists: Playlists = { master: { url: source.url, text: source.master }, level: level, filter: source.filter || null, segment: segment };
+        // A live playlist grown old while hls.js loaded is asked again: hls.js starts behind the newest segment it knows
+        var fresh = !live || !level || Date.now() - level.at < LIVE_LEVEL_MS;
+        var lists: Playlists = { master: { url: source.url, text: source.master }, level: fresh ? level : null, filter: source.filter || null, segment: segment };
         Object.defineProperty(hls.config, PLAYLISTS, { value: lists });
         hls.on(E.MANIFEST_PARSED, function () {
             if (self.hls === hls) {
@@ -663,6 +671,16 @@ export class MseEngine implements Engine {
         }
         var frag = frags[lo];
         return frag && frag.start <= seconds && seconds < frag.start + frag.duration ? frag.start : seconds;
+    }
+
+    /** The playlist's end and the broadcast as the playlist dates its segments */
+    liveDelay(): Delay | null {
+        var hls = this.hls;
+        if (!hls) {
+            return null;
+        }
+        var date = hls.playingDate;
+        return { edge: hundredths(hls.latency), broadcast: date ? hundredths((Date.now() - date.getTime()) / 1000) : -1 };
     }
 
     current(): number {

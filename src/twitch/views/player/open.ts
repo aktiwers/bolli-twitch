@@ -6,16 +6,18 @@ import { followsChannel } from '../../api/follow.js';
 import { Item } from '../../api/types.js';
 import { video } from '../../api/video.js';
 import { ChatConnection } from '../../chat/connection.js';
+import { loadEmotes } from '../../chat/emotes.js';
 import { ChatPanel } from '../../chat/panel.js';
-import { duration, keyOf, leave, owns, pause, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
+import { duration, keyOf, leave, owns, pause, pictureRuns, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
 import { Navigator, Screen } from '../navigator.js';
 import { gatePassed } from './gate.js';
 import { ChatSide, PlayerDeps, PlayerItem, PlayerSession, PlayerView } from './player.js';
+import { Watched, WatchTime } from '../../player/watch-time.js';
 import { startOf } from './resume.js';
 
 var session: PlayerSession = {
     play: play, leave: leave, stop: stop, owns: owns, setQuality: setQuality, seek: seek, pause: pause, resume: resume,
-    position: position, duration: duration, prefetch: prefetch, placeVideo: placeVideo,
+    position: position, duration: duration, prefetch: prefetch, placeVideo: placeVideo, pictureRuns: pictureRuns,
     plays: function (target: Target): boolean {
         return playingKey() === keyOf(target);
     }
@@ -25,6 +27,7 @@ var session: PlayerSession = {
 function chatSide(parent: HTMLElement): ChatSide {
     var panel = new ChatPanel(parent);
     var connection = new ChatConnection();
+    var joined = '';
     return {
         el: panel.el,
         join: panel.join,
@@ -32,7 +35,11 @@ function chatSide(parent: HTMLElement): ChatSide {
             panel.show(on);
         },
         open: function (login: string): void {
+            joined = login.toLowerCase();
             connection.open(login, panel);
+        },
+        emotes: function (channelId: string): void {
+            loadEmotes(joined, channelId);
         },
         close: function (): void {
             connection.close();
@@ -71,7 +78,10 @@ function clipNow(slug: string): Promise<ClipFile> {
 
 function depsFor(nav: Navigator): PlayerDeps {
     return {
-        nav: nav, session: session, liveInfo: liveInfo, video: video, clip: clipNow, gateInfo: gateInfo, follows: followsChannel, chat: chatSide
+        nav: nav, session: session, liveInfo: liveInfo, video: video, clip: clipNow, gateInfo: gateInfo, follows: followsChannel, chat: chatSide,
+        watchTime: function (watched: () => Watched, runs: () => boolean, claimed: (points: number) => void) {
+            return new WatchTime(watched, runs, claimed);
+        }
     };
 }
 

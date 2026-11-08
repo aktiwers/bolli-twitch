@@ -1,15 +1,20 @@
 // Settings as Twitch's TV app has it: five cards (Your Profile, Need Help?, Terms of Service, Privacy Policy,
 // Cookies and Advertising Choices), the first opening Your Profile, the others their QR pages. Under them Bolli's
-// own group in the same cards: chat's gift and raid notices, the mature content warning, the stream request version,
-// the remembered quality, and the version. OK changes a setting to its next choice (Left/Right step back and forth);
-// it is saved at once and holds from the next start of a stream. The QR library loads when Settings first shows,
+// own group in the same cards: chat's gift and raid notices, third-party emotes and layout, the start dim, the mature
+// content warning, Stable Volume (Android), the channel points' bonus, the stream request version, the remembered
+// quality, and the version. OK changes a setting to its next choice (Left/Right step back and forth); it is saved at
+// once and holds from the next start of a stream. The QR library loads when Settings first shows,
 // ready for the QR pages.
 
 import { h, setShown } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
+import { claimsBonus, setClaimsBonus } from '../../api/points.js';
+import { setThirdPartyEmotes, thirdPartyEmotes } from '../../chat/emotes.js';
 import { extraNotices, setExtraNotices } from '../../chat/parse.js';
 import { rememberedQuality, rememberQuality, setUsher, usherPref } from '../../player/session.js';
 import { MenuMode, Navigator, Screen } from '../navigator.js';
+import { chatOver, setChatOver } from '../player/chat-choice.js';
+import { setStartDim, startDim } from '../player/start-dim.js';
 import { setSkipsGate, skipsGate } from '../player/gate.js';
 import { canStabilize, setStableVolume, stableVolume } from '../../player/stable-volume.js';
 import { loadQr, QrPage, SETTINGS_PAGES } from '../qr.js';
@@ -51,18 +56,42 @@ function onOff(v: string): string {
     return v === 'on' ? 'On' : 'Off';
 }
 
-var NOTICES: Setting = {
-    icon: 'notices',
-    title: 'Gift and Raid Notices',
-    values: ['on', 'off'],
-    now: function () { return extraNotices() ? 'on' : 'off'; },
-    set: function (v) { setExtraNotices(v === 'on'); },
-    label: onOff,
+/** A setting that is on or off: get and set it, and the line under the title for each */
+function onOffCard(icon: string, title: string, get: () => boolean, set: (on: boolean) => void, onLine: string, offLine: string): Setting {
+    return {
+        icon: icon,
+        title: title,
+        values: ['on', 'off'],
+        now: function () { return get() ? 'on' : 'off'; },
+        set: function (v) { set(v === 'on'); },
+        label: onOff,
+        line: function (v) { return v === 'on' ? onLine : offLine; }
+    };
+}
+
+var NOTICES = onOffCard('notices', 'Gift and Raid Notices', extraNotices, setExtraNotices,
+    'Chat shows gift subs and raids too, which Twitch\'s TV app leaves out.', 'Chat shows subs and resubs only, as Twitch\'s TV app does.');
+
+var EMOTES = onOffCard('emotes', 'Third-Party Emotes', thirdPartyEmotes, setThirdPartyEmotes,
+    'Chat shows 7TV, BetterTTV and FrankerFaceZ emotes too, which Twitch\'s TV app leaves out.',
+    'Chat shows Twitch\'s own emotes only, as Twitch\'s TV app does.');
+
+var LAYOUT: Setting = {
+    icon: 'layout',
+    title: 'Chat Layout',
+    values: ['beside', 'over'],
+    now: function () { return chatOver() ? 'over' : 'beside'; },
+    set: function (v) { setChatOver(v === 'over'); },
+    label: function (v) { return v === 'over' ? 'Over Video' : 'Beside'; },
     line: function (v) {
-        return v === 'on' ? 'Chat shows gift subs and raids too, which Twitch\'s TV app leaves out.' :
-            'Chat shows subs and resubs only, as Twitch\'s TV app does.';
+        return v === 'over' ? 'The video stays full screen, with chat over its right side.' :
+            'Chat sits beside the video, as in Twitch\'s TV app.';
     }
 };
+
+var DIM = onOffCard('dim', 'Start Dim', startDim, setStartDim,
+    'A player opens with its info over a dimmed picture for a moment, as in Twitch\'s TV app.',
+    'A player opens on a clear picture; keys act at once and show its info.');
 
 var GATE: Setting = {
     icon: 'gate',
@@ -77,18 +106,11 @@ var GATE: Setting = {
     }
 };
 
-var STABLE: Setting = {
-    icon: 'volume',
-    title: 'Stable Volume',
-    values: ['on', 'off'],
-    now: function () { return stableVolume() ? 'on' : 'off'; },
-    set: function (v) { setStableVolume(v === 'on'); },
-    label: onOff,
-    line: function (v) {
-        return v === 'on' ? 'Quiet streams come up and loud ones down, so streams play at about the same level.' :
-            'Streams play as loud as each streamer sends them.';
-    }
-};
+var STABLE = onOffCard('volume', 'Stable Volume', stableVolume, setStableVolume,
+    'Quiet streams come up and loud ones down, so streams play at about the same level.', 'Streams play as loud as each streamer sends them.');
+
+var POINTS = onOffCard('points', 'Channel Points Bonus', claimsBonus, setClaimsBonus,
+    'Signed in, the bonus Twitch offers as you watch a live stream is claimed for you.', 'The bonus is left unclaimed, as in Twitch\'s TV app.');
 
 var USHER: Setting = {
     icon: 'usher',
@@ -103,7 +125,7 @@ var USHER: Setting = {
 };
 
 /** Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there) */
-var SETTINGS = canStabilize() ? [NOTICES, GATE, STABLE, USHER] : [NOTICES, GATE, USHER];
+var SETTINGS = [NOTICES, EMOTES, LAYOUT, DIM, GATE, STABLE, POINTS, USHER].filter(function (s) { return s !== STABLE || canStabilize(); });
 
 /** The remembered quality as Twitch names it (1080p60, 720p), or '' for none */
 function remembered(): string {

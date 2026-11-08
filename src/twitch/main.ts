@@ -1,6 +1,6 @@
 // Bolli Twitch: a copy of Twitch's TV app (its LG and Android TV versions are the same web page) for this LG
 // OLED55C7V-Z (webOS 3.9, Chrome 38) and Android TV, built on the Bolli framework: the same screens, layout and keys,
-// with the Bolli logo, ad-free player types at full quality, and pages kept alive instead of reloaded.
+// with the Bolli logo, streams at full quality, and pages kept alive instead of reloaded.
 //
 // The shell: the top menu over its sections (Home, Following, Browse, Search, Settings, Sign In), each made when first
 // shown and then kept, and the pages opened over a section (a category, a channel, the player). Back closes the top
@@ -8,7 +8,8 @@
 // item; Up from a screen's top lands there and Down gives focus back to the screen. Each screen says how the menu
 // stands over it (Screen.menu); a screen with nothing to focus leaves focus on the menu. Pages are let go of after the
 // screen under them has painted. After OK navigated (or asked a failed screen again, or a screen said so with
-// holdOk), a held OK's repeats are ignored until it is released.
+// holdOk), a held OK's repeats are ignored until it is released. Bolli adds number keys 1 to 4 for the sections and
+// opens a channel a launch or relaunch names.
 // The account changing (a sign-in, a sign-out, a token Twitch refused) keeps the viewer where they are: the screens
 // that show the account's things (accountBound: Home, Following, Settings, Sign In) go, and so do pages over them
 // from the first such page up (Sign In); the other pages stay open, also over a bound section, which is made anew
@@ -17,10 +18,11 @@
 // Home.
 
 import { h, setShown } from '../core/dom.js';
-import { initKeys, KEY, setActive } from '../core/keys.js';
+import { digit, initKeys, KEY, setActive } from '../core/keys.js';
 import { isOnline, onNetwork, watchNetwork } from '../core/network.js';
 import { initPerf, mark } from '../core/perf.js';
 import { ignorePointer } from '../core/platform.js';
+import { initScreenSaver } from '../core/screensaver.js';
 import { initAuth, onAccountChange } from './api/auth.js';
 import { forgetCaches } from './api/cache.js';
 import { channelPage } from './api/channel.js';
@@ -33,7 +35,7 @@ import { Item } from './api/types.js';
 import { video } from './api/video.js';
 import { installChatHook } from './chat/hook.js';
 import { hook } from './hook.js';
-import { prefetch } from './player/session.js';
+import { pictureRuns, prefetch } from './player/session.js';
 import { ErrorView } from './views/account/errors.js';
 import { FollowingView } from './views/account/following.js';
 import { SettingsView } from './views/account/settings.js';
@@ -42,7 +44,7 @@ import { BrowseView, prefetchBrowse } from './views/browse/browse.js';
 import { CategoryPage, prefetchCategory } from './views/browse/category.js';
 import { SearchView } from './views/browse/search.js';
 import { ChannelView } from './views/channel/channel.js';
-import { prefetchChannel } from './views/channel/data.js';
+import { askPage, prefetchChannel } from './views/channel/data.js';
 import { sessionPlayer } from './views/channel/preview.js';
 import { HeldOk } from './views/held-ok.js';
 import { HomeView } from './views/home.js';
@@ -392,6 +394,34 @@ hook('open', function (kind: string, id: string): Promise<boolean> {
     });
 });
 
+/** The launch's parameters (webOS keeps them as JSON), or null */
+function launchParams(): unknown {
+    var w = window as unknown as { PalmSystem?: { launchParams?: string } };
+    try {
+        return JSON.parse((w.PalmSystem && w.PalmSystem.launchParams) || 'null');
+    } catch (e) {
+        return null;
+    }
+}
+
+/** A launch or relaunch naming a channel (parameters { channel: login }, as other webOS Twitch apps take them): its
+ * stream when it is live (resolved meanwhile), else its page; nothing when it shows already */
+function launchChannel(params: unknown): void {
+    var login = params && typeof params === 'object' && (params as { channel?: unknown }).channel;
+    if (typeof login !== 'string' || !/^\w{1,25}$/.test(login)) {
+        return;
+    }
+    var name = login.toLowerCase();
+    prefetch({ kind: 'live', id: name });
+    askPage(name).then(function (p) {
+        var item: Item = p.stream ? { kind: 'stream', stream: p.stream } : { kind: 'channel', channel: p.channel, live: false };
+        var view = top();
+        if (!view.shows || !view.shows(item)) {
+            open(item);
+        }
+    }, function () { return undefined; });
+}
+
 /** The network is back: what failed or waits tries again at once, on every screen kept */
 function retryAll(): void {
     var views: Screen[] = stack.slice();
@@ -406,6 +436,10 @@ function retryAll(): void {
     }
 }
 
+/** Bolli's shortcuts (Twitch's TV app has none): number keys 1 to 4 open Home, Following, Browse and Search, where the
+ * menu has them (a guest's has no Following), unless the screen types digits (Search's keyboard) */
+var SHORTCUTS: MenuItem[] = ['home', 'following', 'browse', 'search'];
+
 /** A key for the menu or the screen on top */
 function onKey(code: number): boolean {
     // No internet: the offline screen is over the app and keys wait
@@ -413,6 +447,11 @@ function onKey(code: number): boolean {
         return true;
     }
     var view = top();
+    var shortcut = SHORTCUTS[digit(code) - 1];
+    if (shortcut && menu.order.indexOf(shortcut) >= 0 && (menu.hasFocus || !view.takesDigits || !view.takesDigits())) {
+        pick(shortcut);
+        return true;
+    }
     if (menu.hasFocus) {
         if (code === KEY.DOWN) {
             settle(false);
@@ -475,3 +514,10 @@ initKeys();
 heldOk.watch();
 // The connection's state: the offline screen, retries, and chat reconnecting at once
 watchNetwork();
+launchChannel(launchParams());
+document.addEventListener('webOSRelaunch', function (e) {
+    launchChannel((e as CustomEvent).detail);
+});
+// No screensaver while a picture plays in sight (the player, a channel page's preview); one loaded ahead out of sight
+// does not count
+initScreenSaver(pictureRuns);

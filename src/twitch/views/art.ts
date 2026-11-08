@@ -24,6 +24,9 @@ var BODY = 'M18 52v-4a10 10 0 0 1 10-10h16a10 10 0 0 1 10 10v4';
 var HEART = 'M34 50C8 32 12 8 34 20C56 8 60 32 34 50Z';
 var PENCIL = 'M10 54l3.5-13L42 12.5a4.6 4.6 0 0 1 6.5 0l3 3a4.6 4.6 0 0 1 0 6.5L23 50.5Z';
 var GHOST = 'M16 52V26a17 17 0 0 1 34 0v26l-5.6-4.4-5.6 4.4-5.6-4.4-5.6 4.4-5.6-4.4Z';
+/** A round face or coin, and a screen */
+var ROUND = '<circle cx="32" cy="30" r="20"/>';
+var SCREEN = '<rect x="8" y="12" width="48" height="36" rx="3"/>';
 var BAG = '<rect x="20" y="24" width="32" height="30" rx="4"/>';
 var SPEAKER = 'M10 24h10l14-11v38L20 40H10Z';
 var HAND = 'M19 34V17a3.5 3.5 0 0 1 7 0v10V12a3.5 3.5 0 0 1 7 0v15V14a3.5 3.5 0 0 1 7 0v14V19a3.5 3.5 0 0 1 7 0v19c0 9-6 15-15 15h-2c-6 0-9-3-12-8l-7-10a3.5 3.5 0 0 1 5.5-4l5 5';
@@ -35,11 +38,17 @@ var ICONS: { [name: string]: string } = {
     privacy: duo('<path d="' + GHOST + '"/>', '<path d="' + GHOST + '"/>',
         '<circle cx="28" cy="28" r="3.2" fill="currentColor"/><circle cx="39" cy="28" r="3.2" fill="currentColor"/>'),
     cookies: duo(BAG, '<path d="M28 24v-5a8 8 0 0 1 16 0v5"/>', '<rect x="20" y="24" width="32" height="30" rx="4" fill="currentColor"/>'),
-    // Bolli's own settings in the same style: a chat bubble, a raised hand, a speaker, a stack of servers, a screen, an i
+    // Bolli's own settings in the same style: a chat bubble, a smiling face, a screen with a column, a screen dark at
+    // the bottom, a raised hand, a speaker, a coin, a stack of servers, a screen, an i
     notices: duo('<path d="M12 12h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H28l-10 8v-8h-6a4 4 0 0 1-4-4V16a4 4 0 0 1 4-4Z"/>',
         '<path d="M16 8h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H32l-10 8v-8h-6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4Z"/>'),
+    emotes: duo(ROUND, ROUND + '<path d="M24 35a10 10 0 0 0 16 0"/>',
+        '<circle cx="25" cy="25" r="3.2" fill="currentColor"/><circle cx="39" cy="25" r="3.2" fill="currentColor"/>'),
+    layout: duo(SCREEN, SCREEN + '<path d="M40 12v36"/>'),
+    dim: duo(SCREEN, SCREEN + '<path d="M8 33h48v12a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3Z" fill="currentColor"/>'),
     gate: duo('<path d="' + HAND + '"/>', '<path d="' + HAND + '"/>'),
     volume: duo('<path d="' + SPEAKER + '"/>', '<path d="' + SPEAKER + '"/><path d="M42 22a12 12 0 0 1 0 20M48 15a21 21 0 0 1 0 34"/>'),
+    points: duo(ROUND, ROUND + '<path d="M32 18a12 12 0 0 1 12 12"/>'),
     usher: duo('<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/>',
         '<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/><path d="M20 18h4M20 40h4"/>'),
     quality: duo('<rect x="10" y="10" width="44" height="30" rx="3"/>', '<rect x="10" y="10" width="44" height="30" rx="3"/><path d="M24 52h16M32 40v12"/>'),
@@ -147,8 +156,8 @@ var BIG: { [name: string]: string } = {
         '<path d="M326 116v160"' + EDGE + '/>')
 };
 
-/** A Settings card's icon: profile, help, terms, privacy, cookies (Twitch's), notices, gate, usher, quality, version
- * (Bolli's) */
+/** A Settings card's icon: profile, help, terms, privacy, cookies (Twitch's), notices, emotes, layout, dim, gate,
+ * volume, points, usher, quality, version (Bolli's) */
 export function cardIcon(name: string): Node {
     return svgNode(ICONS[name]);
 }

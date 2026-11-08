@@ -1,6 +1,6 @@
 // What a playback engine does for the session (player/session.ts): the TV's own player and our Media Source engine
-// on hls.js both implement it. The session resolves the stream (token, master, qualities, ads) and does what is the
-// same for both on the video itself (seek, pause, position, buffer, duration); an engine plays a source.
+// on hls.js both implement it. The session resolves the stream (token, master, qualities, stitched segments) and does
+// what is the same for both on the video itself (seek, pause, position, buffer, duration); an engine plays a source.
 
 import { SegmentAhead } from './segment.js';
 
@@ -19,10 +19,10 @@ export interface Quality {
     codecs?: string;
 }
 
-/** Why playback stopped: no broadcast or no such video (offline), refused to this viewer (forbidden), no answer
- * (network), the account's token refused (auth), the picture failed (media), no Media Source worker (worker), a
- * stream the app cannot play (stream) */
-export type FailureKind = 'offline' | 'forbidden' | 'network' | 'auth' | 'media' | 'worker' | 'stream';
+/** Why playback stopped: no broadcast or no such video (offline), refused to this viewer (forbidden), kept for the
+ * channel's subscribers (subonly), no answer (network), the account's token refused (auth), the picture failed
+ * (media), no Media Source worker (worker), a stream the app cannot play (stream) */
+export type FailureKind = 'offline' | 'forbidden' | 'subonly' | 'network' | 'auth' | 'media' | 'worker' | 'stream';
 
 export interface Failure {
     kind: FailureKind;
@@ -44,11 +44,11 @@ export interface Source {
     startAt?: number;
     /** The largest picture height wanted (a preview); 0 for no limit */
     maxHeight: number;
-    /** A media playlist the session already fetched (its ad check), handed to hls.js once instead of a fetch */
-    level?: { url: string; text: string };
+    /** A media playlist the session already fetched (its stitched check), handed to hls.js once instead of a fetch */
+    level?: Fetched;
     /** A past broadcast's first segment fetched ahead, handed to hls.js once when it asks for that address */
     segment?: SegmentAhead;
-    /** Live streams on the Media Source engine: every media playlist goes through it (ad segments become gaps) */
+    /** Live streams on the Media Source engine: every media playlist goes through it (stitched segments become gaps) */
     filter?: (text: string) => string;
 }
 
@@ -61,6 +61,13 @@ export interface EngineEvents {
     stalled(action: string): void;
     /** It cannot go on */
     failed(failure: Failure): void;
+}
+
+/** A playlist's text as fetched, and when (Date.now()) */
+export interface Fetched {
+    url: string;
+    text: string;
+    at: number;
 }
 
 export interface Engine {
@@ -81,6 +88,14 @@ export interface Engine {
     stop(): void;
     /** Where a seek to seconds lands (none: there) */
     seekTarget?(seconds: number): number;
+    /** How far a live stream is behind (the test hook; null when not known) */
+    liveDelay?(): Delay | null;
+}
+
+/** Seconds a live stream plays behind the end of its playlist and behind the broadcast (-1: not known) */
+export interface Delay {
+    edge: number;
+    broadcast: number;
 }
 
 /** Seconds buffered ahead of the video's playhead */

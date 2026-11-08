@@ -1,12 +1,12 @@
-// Playback tokens and stream list addresses (Twitch's usher). A token is asked as an ad-free player type: popout
-// first, then embed, frontpage and mobile_web (Twitch's own types, site on the website and pulsar in its TV app, carry
-// stitched ads). The stream list is asked through usher v1 as Twitch's TV app asks it, or through v2 with the
-// website's parameters; the caller picks the version, and the token remembers the one it was made for. Tokens,
-// signatures and stream addresses are never logged or shown.
+// Playback tokens and stream list addresses (Twitch's usher). A token is asked as one of PLAYER_TYPES: popout first,
+// then embed, frontpage and mobile_web (Twitch's own types, site on the website and pulsar in its TV app, carry
+// segments Twitch stitches in). The stream list is asked through usher v1 as Twitch's TV app asks it, or through v2
+// with the website's parameters; the caller picks the version, and the token remembers the one it was made for.
+// Tokens, signatures and stream addresses are never logged or shown.
 
 import { gql, platform, randomId } from './gql.js';
 
-/** The ad-free player types, in the order they are tried */
+/** The player types tokens are asked as, in the order they are tried */
 export var PLAYER_TYPES = ['popout', 'embed', 'frontpage', 'mobile_web'];
 
 export type UsherVersion = 'v1' | 'v2';
@@ -69,7 +69,7 @@ function refusal(kind: 'offline' | 'forbidden'): TokenRefusal {
 }
 
 /** A token for a live channel or a past broadcast (also a highlight or upload) as playerType, for usher version.
- * Asked as a guest unless withAccount: with a signed-in viewer's token Twitch stitched ads into the ad-free player
+ * Asked as a guest unless withAccount: with a signed-in viewer's token Twitch stitched its segments into these player
  * types too (seen on the TV), with a guest's it did not; the account is for what a guest may not watch */
 export function playbackToken(kind: StreamKind, id: string, playerType: string, version: UsherVersion, withAccount?: boolean): Promise<Token> {
     var vars: { [name: string]: string } = { id: id, playerType: playerType };
@@ -96,6 +96,17 @@ export function tokenRefuses(t: Token): boolean {
         return !!((v.authorization && v.authorization.forbidden) || (v.private && v.private.allowed_to_view === false) || v.geoblock_reason);
     } catch (e) {
         return false;
+    }
+}
+
+/** The error code of an usher refusal's body (a list of errors as JSON), or '' */
+export function usherCode(body: string): string {
+    try {
+        var errors = JSON.parse(body);
+        var first = errors instanceof Array ? errors[0] : errors;
+        return first && typeof first.error_code === 'string' ? first.error_code : '';
+    } catch (e) {
+        return '';
     }
 }
 

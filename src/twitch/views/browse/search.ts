@@ -197,6 +197,10 @@ export class SearchView implements Screen {
         return true;
     }
 
+    takesDigits(): boolean {
+        return !this.term;
+    }
+
     onKey(code: number): boolean {
         var used = this.term ? this.resultsKey(code) : this.inputKey(code);
         this.restSoon();

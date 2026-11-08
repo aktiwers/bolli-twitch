@@ -87,6 +87,27 @@ export function segmentStart(text: string, at: number): number {
     return segment ? segment.start : at;
 }
 
+/** The stretches of a past broadcast Twitch muted for copyrighted audio (its segments' addresses end in -muted), as
+ * [start, end] seconds on the playlist's timeline, neighbours joined */
+export function mutedRanges(text: string): number[][] {
+    var out: number[][] = [];
+    var re = /#EXTINF:([\d.]+)/g;
+    var start = 0;
+    for (var m = re.exec(text); m; m = re.exec(text)) {
+        var end = start + parseFloat(m[1]);
+        if (/-muted\./.test(addressAfter(text, m.index))) {
+            var last = out[out.length - 1];
+            if (last && last[1] === start) {
+                last[1] = end;
+            } else {
+                out.push([start, end]);
+            }
+        }
+        start = end;
+    }
+    return out;
+}
+
 /** The first line after the one at from that is not a tag or blank */
 function addressAfter(text: string, from: number): string {
     for (var at = text.indexOf('\n', from) + 1; at > 0 && at < text.length;) {
@@ -104,6 +125,25 @@ function addressAfter(text: string, from: number): string {
 }
 
 var END_TAG = '#EXT-X-ENDLIST';
+var TARGET_TAG = /#EXT-X-TARGETDURATION:(\d+)/;
+
+/** A live media playlist with its target duration cut to its longest segment's, rounded as the HLS spec rounds it.
+ * Twitch declares 6 s for its 2 s segments, and hls.js starts a live stream at least a target duration behind the
+ * newest segment, so its live sync could not bring the start closer. hls.js times more by it: an unchanged playlist
+ * is asked again after half of it, the start's jump over a gap goes up to two of it */
+export function liveTarget(text: string): string {
+    var m = TARGET_TAG.exec(text);
+    if (!m) {
+        return text;
+    }
+    var longest = 0;
+    var re = /#EXTINF:([\d.]+)/g;
+    for (var e = re.exec(text); e; e = re.exec(text)) {
+        longest = Math.max(longest, parseFloat(e[1]));
+    }
+    var target = Math.max(1, Math.round(longest));
+    return longest > 0 && target < +m[1] ? text.replace(TARGET_TAG, '#EXT-X-TARGETDURATION:' + target) : text;
+}
 
 /** A past broadcast's media playlist for hls.js: its first date tag only, and an end when it has none (the broadcast
  * still records). Without one hls.js takes it for live and parses all of it again every target duration, which

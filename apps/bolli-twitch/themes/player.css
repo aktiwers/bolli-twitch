@@ -4,7 +4,7 @@
 
 .bt-pl { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
 .bt-pl-box { position: absolute; left: 0; top: 0; width: 960px; height: 720px; }
-.bt-pl--vod .bt-pl-box, .bt-pl--clip .bt-pl-box, .bt-pl--chatless .bt-pl-box { width: 1280px; }
+.bt-pl--vod .bt-pl-box, .bt-pl--clip .bt-pl-box, .bt-pl--chatless .bt-pl-box, .bt-pl--chatover .bt-pl-box { width: 1280px; }
 /* Paused: the big play sign in the picture's middle, over the overlay's shade (also with the overlay hidden) */
 .bt-pl-play { display: none; position: absolute; left: 50%; top: 50%; z-index: 2; width: 80px; height: 80px; margin: -40px 0 0 -40px; }
 .bt-pl-play svg { display: block; width: 100%; height: 100%; }

@@ -1,6 +1,6 @@
 // Twitch's fMP4 segments (recent past broadcasts, some live channels) come as low-latency CMAF chunks: one segment
 // holds many moof/mdat pairs. The TV's Media Source parser takes the first pair and then fails the stream (not
-// supported), while one moof and one mdat per segment, as YouTube and DR send, plays. So a chunked segment is
+// supported), while one moof and one mdat per segment, as other services send, plays. So a chunked segment is
 // rewritten as one fragment: per track one traf with the first chunk's tfdt and one trun listing every sample, and
 // one mdat with each track's data in turn. The samples, their decode times and their bytes stay as they were (a jump
 // in a later chunk's decode time goes into the duration of the sample before it); every top-level box other than

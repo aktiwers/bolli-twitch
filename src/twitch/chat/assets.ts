@@ -57,11 +57,12 @@ function kept(): Lists {
     return lists;
 }
 
-function isObject(value: unknown): boolean {
+export function isObject(value: unknown): boolean {
     return !!value && typeof value === 'object';
 }
 
-function has(map: object, key: string): boolean {
+/** Whether map has key as its own (a stored map is a plain object, whose prototype's names are not its keys) */
+export function has(map: object, key: string): boolean {
     return Object.prototype.hasOwnProperty.call(map, key);
 }
 

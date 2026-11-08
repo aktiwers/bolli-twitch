@@ -7,10 +7,11 @@
 //   engine('native' | 'mse' | '')                the engine live streams and past broadcasts start on in this run
 //                                                ('' the policy's; never stored); returns what each kind starts on
 //   usher('v1' | 'v2' | '')                      the usher version to start with ('' the default)
-//   account(on)                                  stream tokens asked with the account (signed in) in this run: ads
+//   account(on)                                  stream tokens asked with the account (signed in) in this run: stitched
 //   levels(ms)                                   Stable Volume's input and output level over ms (dB RMS and peak; Android)
 //   quality(index), seek(s), pause(), resume(), debug(on) (hls.js's warnings on the console)
-//   state()                                      the session's state, first picture, stalls, seeks, pipelines, events
+//   state()                                      the session's state, first picture, stalls, seeks, pipelines, live
+//                                                delay, events
 // It prints no token, signature or stream address.
 
 import { whenLoaded } from '../../core/dom.js';
@@ -195,6 +196,7 @@ var api = {
         out.seeks = seeks;
         out.pipelines = pipelineStats;
         out.adSegmentsMarked = adStats.marked;
+        out.liveDelay = session.liveDelay();
         out.events = log.slice();
         return out;
     }

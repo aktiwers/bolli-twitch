@@ -1,6 +1,6 @@
 {
   "name": "bolli-twitch",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "private": true,
   "description": "A Twitch app for LG webOS TVs, Android TV and Google TV",
   "license": "GPL-3.0-only",

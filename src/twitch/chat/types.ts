@@ -9,10 +9,23 @@ export var KEPT = 30;
 
 export type Part =
     { kind: 'text'; text: string } |
-    { kind: 'emote'; name: string; url: string } |
+    /** ratio: a third-party emote's width over its height (none: square); over: drawn over the emote before it */
+    { kind: 'emote'; name: string; url: string; ratio?: number; over?: boolean } |
     { kind: 'link'; text: string } |
     /** Words drawn in the link colour, as "Prime" in a sub notice */
     { kind: 'highlight'; text: string };
+
+/** A third-party emote as chat draws it (chat/emotes.ts) */
+export interface ChatEmote {
+    url: string;
+    /** Width over height */
+    ratio: number;
+    /** A zero-width emote: drawn over the emote before it */
+    over: boolean;
+}
+
+/** The third-party emote a word names in a channel's chat, or null */
+export type EmoteFinder = (word: string) => ChatEmote | null;
 
 /** chat: a sender's message; notice: a sub, resub, gift or raid on the lighter band; status: a grey line (a timeout,
  * a ban, a drop); welcome: the greeting with its divider */

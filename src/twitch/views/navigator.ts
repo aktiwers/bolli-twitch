@@ -24,6 +24,8 @@ export interface Screen extends View {
     narrow?(): void;
     /** It shows what OK on item would open (the player's avatar over that channel's page goes back to it) */
     shows?(item: Item): boolean;
+    /** Number keys type on it now (Search's keyboard): the shell's number-key shortcuts leave them to it */
+    takesDigits?(): boolean;
     /** What failed is asked again. pressed: OK, which asks only where focus is on Try Again (true: it was, the press
      * is used); else the network is back and everything failed or waiting is asked at once */
     retry?(pressed?: boolean): boolean;

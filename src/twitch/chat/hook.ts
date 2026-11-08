@@ -6,6 +6,7 @@
 import { hook } from '../hook.js';
 import { loadBadges } from './assets.js';
 import { ChatConnection } from './connection.js';
+import { loadEmotes } from './emotes.js';
 import { IrcLine, parseLine } from './irc.js';
 import { ChatPanel } from './panel.js';
 
@@ -38,6 +39,7 @@ function open(login: string): void {
         connection = new ChatConnection();
     }
     connection.open(login, p);
+    loadEmotes(login.toLowerCase());
 }
 
 function close(): void {

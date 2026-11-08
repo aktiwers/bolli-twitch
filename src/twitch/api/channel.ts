@@ -1,7 +1,7 @@
 // A channel's page as Twitch's TV app shows it (header, live preview or latest video, the channel's video rows in
 // Twitch's order and wording), what changes on the player's live line (title, category, uptime, viewers), which
 // Twitch's TV app asks again every 60 s, and the content labels the player's gate names. No playback token here:
-// the player asks its own with an ad-free player type.
+// the player asks its own (player/session.ts).
 
 import { gql, notFound } from './gql.js';
 import { Channel, Item, LiveUpdate, Shelf, Stream, Video } from './types.js';

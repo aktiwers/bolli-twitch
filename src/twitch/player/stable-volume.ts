@@ -1,5 +1,5 @@
 // Stable Volume (Settings, Android only): Twitch streams come as loud as each streamer sends them, mostly quieter and
-// less even than YouTube's levelled sound. With it on, the video's sound goes through Web Audio: a compressor that
+// less even than levelled broadcast sound. With it on, the video's sound goes through Web Audio: a compressor that
 // lifts quiet passages and holds back loud ones, a gain that brings the whole up, and a limiter against clipping.
 // Android only: the LG TV plays video sound in its own hardware (Web Audio hears silence there), and its own Auto
 // Volume does the same job. The video is wired only once the setting is on (Web Audio takes its sound for good), and

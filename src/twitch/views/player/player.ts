@@ -3,11 +3,13 @@
 // past broadcast and a clip (full width, with the progress track). Over the picture: Go Back, the channel's
 // avatar (LIVE under it) with its name, title and "game | uptime | viewers" (a white bubble "Go to <name>'s profile..."
 // while it has focus), Follow, the options, quality and chat buttons, and for clips Watch Full Video. The overlay hides
-// 5 s after the last key, sooner after the screen opens; keys act at once while it is hidden. Back leaves at once (it
+// 5 s after the last key, sooner after the screen opens (at once with Bolli's start dim switched off); keys act at
+// once while it is hidden (and the yellow key as the chat button, a Bolli shortcut). Back leaves at once (it
 // first closes the quality menu or the Unfollow box). Twitch's prompts cover the screen when the content is gated
 // (known before anything plays: from the tile or page, else from its own page first; mature content asked once per
 // channel in a run, never with Bolli's Mature Content Warning switched off; Twitch's age, region and account
-// restrictions every time, as Twitch's gate for their kind), the stream ended, the video ended or it failed; a stream
+// restrictions every time, as Twitch's gate for their kind), the stream ended, the video ended, it is for the
+// channel's subscribers (Twitch's Subscribers Only) or it failed; a stream
 // not playable on this device gives the player's place to Twitch's error page.
 // Instant: the screen and the channel's line show at once and the stream starts in show() (a stream that plays already,
 // the channel page's preview, is handed over, not restarted). Out of sight it leaves the playback to the session
@@ -18,6 +20,7 @@
 
 import { h, setShown, setText, toggleClass } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
+import { toast } from '../../../ui/toast.js';
 import { GateInfo } from '../../api/channel.js';
 import { ClipFile } from '../../api/clip.js';
 import { GqlError } from '../../api/gql.js';
@@ -27,6 +30,7 @@ import { avatarAt } from '../../api/pictures.js';
 import { Channel, Clip, Item, LiveUpdate, Stream, Video } from '../../api/types.js';
 import { Failure } from '../../player/engine.js';
 import { Box, PlayOptions, SessionEvents, Target } from '../../player/session.js';
+import { Watched } from '../../player/watch-time.js';
 import { Confirm } from '../confirm.js';
 import { Follow } from '../follow.js';
 import { chevronIcon, gearIcon } from '../icons.js';
@@ -34,7 +38,8 @@ import { MenuMode, Navigator, Screen } from '../navigator.js';
 import { joinChat, QrPage } from '../qr.js';
 import { Rest } from '../rest.js';
 import { ago } from '../tiles.js';
-import { chatHidden, setChatHidden } from './chat-choice.js';
+import { chatHidden, chatOver, setChatHidden } from './chat-choice.js';
+import { startDim } from './start-dim.js';
 import { Direction, FocusGraph, Links } from './focus.js';
 import { uptime, viewers, views } from './format.js';
 import { acceptGate, gatePassed } from './gate.js';
@@ -57,6 +62,8 @@ var BESIDE_CHAT: Box = { left: 0, top: 0, width: 960, height: 720 };
 var WHOLE: Box = { left: 0, top: 0, width: 1280, height: 720 };
 /** Where the viewer is in a past broadcast is kept this often while the player shows (and when it goes) */
 var KEEP_MS = 15 * 1000;
+/** Twitch's words when a past broadcast plays a stretch it muted */
+var MUTED = 'Audio for portions of this video has been muted as it appears to contain copyrighted content owned or controlled by a third party.';
 /** Twitch's avatar is 117 px at 1920: asked a size that stays sharp */
 var AVATAR_SIZE = 150;
 
@@ -102,6 +109,8 @@ export interface PlayerSession {
     owns(events: SessionEvents): boolean;
     /** Whether target plays now (for any screen; not a failed playback) */
     plays(target: Target): boolean;
+    /** Whether a picture plays in sight now (whoever owns it) */
+    pictureRuns(): boolean;
     setQuality(index: number): void;
     seek(seconds: number): void;
     pause(): void;
@@ -119,7 +128,14 @@ export interface ChatSide {
     join: HTMLElement;
     show(on: boolean): void;
     open(login: string): void;
+    /** The picture plays: the channel's third-party emote lists may load now (they would compete with the start) */
+    emotes(channelId: string): void;
     close(): void;
+}
+
+/** A live player's watch time (player/watch-time.ts) */
+export interface WatchClock {
+    stop(): void;
 }
 
 export interface PlayerDeps {
@@ -132,6 +148,9 @@ export interface PlayerDeps {
     /** Whether the signed-in account follows the channel */
     follows(login: string): Promise<boolean>;
     chat(parent: HTMLElement): ChatSide;
+    /** watched: the stream as it reports it now; runs: whether its picture plays in sight; claimed: the channel points'
+     * bonus was claimed, with its points */
+    watchTime(watched: () => Watched, runs: () => boolean, claimed: (points: number) => void): WatchClock;
 }
 
 /** What a player opens: a live stream, a past broadcast (from a position, else where the viewer stopped), a clip */
@@ -213,8 +232,13 @@ export class PlayerView implements Screen {
     /** Over: a prompt (ended, failed) shows instead of the picture */
     private over = false;
     private chatShown = true;
+    /** Chat shows over the video, which stays full width (Settings) */
+    private chatOver = false;
     /** The chat's connection is open (with chat hidden at the start: once the chat button first shows it) */
     private chatJoined = false;
+    /** The picture has played, and the chat's emote lists were asked for after it */
+    private played = false;
+    private emotesAsked = false;
     /** Where focus was before it went to Join (Left from Join goes back there) */
     private beforeJoin = 'follow';
     private hideTimer = 0;
@@ -243,6 +267,9 @@ export class PlayerView implements Screen {
     private track: Track | null = null;
     private quality: QualityMenu;
     private chat: ChatSide | null = null;
+    /** A live stream's watch time, and the stream as it reports it (its broadcast and game kept up to date) */
+    private watch: WatchClock | null = null;
+    private watched: Watched | null = null;
     private prompt = new Prompt();
     private confirm = new Confirm();
 
@@ -259,6 +286,7 @@ export class PlayerView implements Screen {
             this.gated = !!s.mature;
             this.restricted = !!s.restricted;
             this.target = { kind: 'live', id: s.channel.login };
+            this.watched = { login: s.channel.login, channelId: s.channel.id, broadcastId: s.id, game: s.game ? s.game.name : '' };
         } else if (item.kind === 'vod') {
             var v = item.video;
             this.channel = v.channel;
@@ -289,6 +317,8 @@ export class PlayerView implements Screen {
         }
         this.events = {
             playing: function () {
+                self.played = true;
+                self.askEmotes();
                 self.setBuffering(false);
                 self.setPaused(false);
             },
@@ -301,6 +331,11 @@ export class PlayerView implements Screen {
             ended: function () {
                 if (self.kind === 'vod') {
                     self.watchAgain();
+                }
+            },
+            muted: function (on: boolean) {
+                if (on && self.visible) {
+                    toast(MUTED);
                 }
             },
             qualities: function (list, picked, playing) {
@@ -373,6 +408,8 @@ export class PlayerView implements Screen {
             this.buttons.join = this.chat.join;
             this.chatShown = !chatHidden();
             toggleClass(this.el, 'bt-pl--chatless', !this.chatShown);
+            this.chatOver = chatOver();
+            toggleClass(this.el, 'bt-pl--chatover', this.chatOver);
         }
         this.el.appendChild(this.prompt.el);
         this.el.appendChild(this.confirm.el);
@@ -395,6 +432,24 @@ export class PlayerView implements Screen {
         if (this.chatShown) {
             this.joinChat();
         }
+        // Watch time for a channel whose id is known (a stream opened from a page that had none reports nothing): it
+        // counts while this player's picture plays in sight
+        var watched = this.watched;
+        if (watched && watched.channelId) {
+            this.watch = deps.watchTime(function () { return watched as Watched; }, function () {
+                return deps.session.owns(self.events) && deps.session.pictureRuns();
+            }, function (points: number) {
+                if (self.visible) {
+                    toast('+' + points + ' channel points claimed');
+                }
+            });
+        }
+    }
+
+    /** A live player shows its channel's stream: opening that stream again goes back to it, a launch naming it opens
+     * nothing more */
+    shows(item: Item): boolean {
+        return this.kind === 'live' && item.kind === 'stream' && item.stream.channel.login === this.channel.login;
     }
 
     show(): void {
@@ -412,7 +467,11 @@ export class PlayerView implements Screen {
             this.start();
         }
         // Back from a page it opened: as after a key
-        this.wake(this.opened ? IDLE_MS : OPEN_IDLE_MS);
+        if (this.opened) {
+            this.wake(IDLE_MS);
+        } else {
+            this.wakeOpened();
+        }
         this.opened = true;
         var self = this;
         if (this.kind === 'live') {
@@ -456,6 +515,9 @@ export class PlayerView implements Screen {
         if (this.chat) {
             this.chat.close();
         }
+        if (this.watch) {
+            this.watch.stop();
+        }
         // The screen under it (the channel page) may have taken the same playback back already
         if (this.deps.session.owns(this.events)) {
             this.deps.session.stop();
@@ -494,6 +556,9 @@ export class PlayerView implements Screen {
         }
         if (code === KEY.BACK) {
             this.deps.nav.back();
+        } else if (code === KEY.YELLOW && this.chat) {
+            // A Bolli shortcut: the yellow key as the chat button
+            this.press('chat');
         } else if (code === KEY.OK) {
             this.press(this.focus.current);
         } else if ((code === KEY.LEFT || code === KEY.RIGHT) && this.focus.current === 'knob' && this.track) {
@@ -867,7 +932,8 @@ export class PlayerView implements Screen {
         }
     }
 
-    /** The chat shown or hidden: instant, the video and the buttons follow; shown the first time, it joins */
+    /** The chat shown or hidden: instant, the video and the buttons follow; shown the first time, it joins. Hidden
+     * (the yellow key) with focus on its Join button, focus goes back where it came from */
     private setChat(on: boolean): void {
         this.chatShown = on;
         toggleClass(this.el, 'bt-pl--chatless', !on);
@@ -877,6 +943,10 @@ export class PlayerView implements Screen {
         if (this.chat) {
             this.chat.show(on);
         }
+        if (!on && this.focus.current === 'join') {
+            this.focus.set(this.usable(this.beforeJoin) ? this.beforeJoin : 'chat');
+            this.drawFocus();
+        }
         this.placeVideo();
     }
 
@@ -885,12 +955,21 @@ export class PlayerView implements Screen {
         if (this.chat && !this.chatJoined) {
             this.chatJoined = true;
             this.chat.open(this.channel.login);
+            this.askEmotes();
+        }
+    }
+
+    /** The chat's emote lists, once its connection is open and the picture has played */
+    private askEmotes(): void {
+        if (this.chat && this.chatJoined && this.played && !this.emotesAsked) {
+            this.emotesAsked = true;
+            this.chat.emotes(this.channel.id);
         }
     }
 
     /** The app's video under the screen: the box left of the chat, or the whole screen */
     private placeVideo(): void {
-        this.deps.session.placeVideo(this.kind === 'live' && this.chatShown ? BESIDE_CHAT : WHOLE);
+        this.deps.session.placeVideo(this.kind === 'live' && this.chatShown && !this.chatOver ? BESIDE_CHAT : WHOLE);
     }
 
     // The line
@@ -938,6 +1017,10 @@ export class PlayerView implements Screen {
             }
             if (u.game) {
                 self.game = u.game.displayName;
+            }
+            if (self.watched) {
+                self.watched.broadcastId = u.id || self.watched.broadcastId;
+                self.watched.game = u.game ? u.game.name : '';
             }
             self.drawInfo();
         }, function () { return undefined; });
@@ -1008,7 +1091,18 @@ export class PlayerView implements Screen {
         toggleClass(this.el, 'bt-pl--gate', false);
         this.prompt.set(null);
         this.start();
-        this.wake(OPEN_IDLE_MS);
+        this.wakeOpened();
+    }
+
+    /** The overlay as the screen opens or its gate is passed: for a moment, or hidden at once with Settings' start
+     * dim switched off */
+    private wakeOpened(): void {
+        if (startDim()) {
+            this.wake(OPEN_IDLE_MS);
+        } else {
+            clearTimeout(this.hideTimer);
+            this.idleNow();
+        }
     }
 
     /** A prompt over the picture, the quality menu closed (what plays is the caller's to stop) */
@@ -1066,6 +1160,11 @@ export class PlayerView implements Screen {
         var goBack = { label: 'Go Back', act: function () { self.deps.nav.back(); } };
         if (f.kind === 'offline' && this.kind === 'live') {
             this.streamEnded();
+        } else if (f.kind === 'subonly') {
+            this.showOver({ picture: 'monitor', title: 'Subscribers Only', lines: this.kind === 'live' ? [
+                { text: this.channel.displayName + ' is streaming for subscribers. Subscribe from your browser to watch and support ' + this.channel.displayName + '.' },
+                { text: 'Get Ad free viewing on this channel (with limited exception), ability to watch and chat during sub-only streams, Subscriber emotes, and a Subscriber badge.' }
+            ] : [{ text: 'This video is only available to subscribers. Please subscribe on Twitch.tv or your mobile device.' }], buttons: [goBack] });
         } else if (f.kind === 'offline' || f.kind === 'forbidden') {
             this.showOver({ picture: 'monitor', title: 'Oh bummer…', lines: [{ text: 'This content is not available.' }], buttons: [goBack] });
         } else if (f.kind === 'stream') {

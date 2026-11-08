@@ -23,6 +23,10 @@ export interface HlsInstance {
     startLevel: number;
     capLevelToPlayerSize: boolean;
     readonly bandwidthEstimate: number;
+    /** Seconds behind the live playlist's end */
+    readonly latency: number;
+    /** The playing frame's time as the playlist dates it */
+    readonly playingDate: Date | null;
     on(event: string, listener: (event: string, data: any) => void): void;
     attachMedia(media: HTMLVideoElement | { media: HTMLVideoElement; mediaSource: MediaSource; tracks: unknown }): void;
     loadSource(url: string): void;

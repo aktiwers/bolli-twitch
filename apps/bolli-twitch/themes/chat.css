@@ -21,6 +21,7 @@
 .bt-chat-system { display: none; }
 .bt-chat-badge { width: 18px; height: 18px; margin-right: 3px; vertical-align: middle; }
 .bt-chat-name { font-weight: 600; }
+/* An emote's height (panel.ts EMOTE_PX sets a third-party one's width from it) */
 .bt-chat-emote { width: 28.8px; height: 28.8px; vertical-align: middle; }
 .bt-chat-link, .bt-chat-deleted { color: #bf94ff; }
 
@@ -42,3 +43,10 @@
 .bt-chat-join-icon { width: 14.4px; height: 20.13px; margin: 4.33px 13.2px 4.33px 16.8px; fill: currentColor; }
 .bt-chat-join-label { padding-right: 12px; font-size: 16.8px; font-weight: 600; line-height: 25.2px; white-space: nowrap; }
 .bt-chat-join.bt-focused { background: #fff; color: #1f1f23; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; }
+
+/* Chat over the video (a Bolli setting): the panel see-through over the picture's right side, the rows' list clear
+   (the panel darkens once), no fade at the top edge, notices on a see-through band */
+.bt-pl--chatover .bt-chat { background: rgba(14, 14, 16, .6); }
+.bt-pl--chatover .bt-chat-list { background: transparent; }
+.bt-pl--chatover .bt-chat-fade { display: none; }
+.bt-pl--chatover .bt-chat-row--notice { background: rgba(38, 38, 44, .7); }

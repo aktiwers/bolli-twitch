@@ -10,6 +10,7 @@
 
 import { h, setClass, setText, translate, uiScale } from '../../core/dom.js';
 import { badgeOf } from './assets.js';
+import { emoteFinder } from './emotes.js';
 import { IrcLine } from './irc.js';
 import { loginOf, messageOf, statusLine } from './parse.js';
 import { ChatEvents, KEPT, Message, MessageKind, Part } from './types.js';
@@ -25,6 +26,8 @@ var DRAW_MS = 250;
 var READ_PER_S = 15;
 /** Queued beyond what may be drawn now, this many wait for the next draws; older ones are skipped */
 var WAITING = 2;
+/** An emote's height, as themes/chat.css draws it: a third-party one is as wide as its ratio makes it */
+var EMOTE_PX = 28.8;
 var WELCOME = 'Welcome to the chat room!';
 var DISCONNECTED = 'You have been disconnected from chat.';
 var DELETED = '<message deleted>';
@@ -189,7 +192,7 @@ export class ChatPanel implements ChatEvents {
         var taken = 0;
         while (made < count && taken < this.queue.length) {
             var q = this.queue[taken++];
-            var m = isLine(q) ? messageOf(q, badgeOf) : q;
+            var m = isLine(q) ? messageOf(q, badgeOf, emoteFinder) : q;
             if (m) {
                 var row = this.nextRow();
                 fill(row, m);
@@ -277,10 +280,13 @@ function fill(row: Row, m: Message): void {
 /** Draws parts into el: text, links and highlights in the link colour, emotes as the row's pictures from emote on
  * (an unchanged address loads nothing); the next free picture's number */
 function drawParts(el: HTMLElement, parts: Part[], emotes: HTMLImageElement[], emote: number): number {
+    /** The width of the emote just drawn (0: the part before was not one) */
+    var before = 0;
     for (var i = 0; i < parts.length; i++) {
         var part = parts[i];
         if (part.kind === 'text') {
             el.appendChild(document.createTextNode(part.text));
+            before = 0;
         } else if (part.kind === 'emote') {
             var img = emotes[emote];
             if (!img) {
@@ -291,12 +297,32 @@ function drawParts(el: HTMLElement, parts: Part[], emotes: HTMLImageElement[], e
                 img.src = part.url;
             }
             img.alt = part.name;
+            var width = EMOTE_PX * (part.ratio || 1);
+            setStyle(img, 'width', part.ratio ? px(width) : '');
+            // Over the emote before it: centred on it, taking no room of its own
+            var over = part.over && before > 0;
+            setStyle(img, 'marginLeft', over ? px(-(before + width) / 2) : '');
+            setStyle(img, 'marginRight', over ? px((before - width) / 2) : '');
+            before = over ? before : width;
             el.appendChild(img);
         } else {
             el.appendChild(h('span', 'bt-chat-link', part.text));
+            before = 0;
         }
     }
     return emote;
+}
+
+/** A length in hundredths of a pixel, as the style reads it back (so an unchanged one is not written again) */
+function px(n: number): string {
+    return Math.round(n * 100) / 100 + 'px';
+}
+
+/** A reused picture's style property, written only when it changes */
+function setStyle(img: HTMLImageElement, name: 'width' | 'marginLeft' | 'marginRight', value: string): void {
+    if (img.style[name] !== value) {
+        img.style[name] = value;
+    }
 }
 
 function deleted(row: Row): void {

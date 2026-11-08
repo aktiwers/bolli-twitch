@@ -1,14 +1,18 @@
 // Twitch chat's IRC lines (chat/irc.ts) as the messages the panel draws: a chat line split into text, emote and link
-// parts with the sender's badges and the name colour Twitch's TV app draws; a sub or resub as a notice in the TV app's
+// parts (Twitch's emotes where the line places them, then the words that name a third-party emote) with the sender's
+// badges and the name colour Twitch's TV app draws; a sub or resub as a notice in the TV app's
 // words; gifts and raids, which the TV app leaves out, as a Bolli extra in Twitch's own system text (on unless switched
 // off in Settings); a timeout or ban as a grey status line.
 
 import { load, save } from '../../core/store.js';
 import { IrcLine, tagValue } from './irc.js';
-import { Message, MessageKind, Part } from './types.js';
+import { ChatEmote, EmoteFinder, Message, MessageKind, Part } from './types.js';
 
 /** The picture of badge "set/version" in channel's chat, or '' when the lists don't have it (chat/assets.ts) */
 export type BadgeLookup = (channel: string, id: string) => string;
+
+/** The third-party emotes of channel's chat, or null for none (chat/emotes.ts) */
+export type EmoteLookup = (channel: string) => EmoteFinder | null;
 
 /** Twitch's colour for a name without one */
 var DEFAULT_COLOR = '#efeff1';
@@ -37,12 +41,12 @@ export function setExtraNotices(on: boolean): void {
 
 /** A chat line (PRIVMSG), a notice (USERNOTICE) or a timeout or ban (CLEARCHAT) as a Message, or null for what the
  * panel does not draw */
-export function messageOf(line: IrcLine, badges: BadgeLookup): Message | null {
+export function messageOf(line: IrcLine, badges: BadgeLookup, emotes?: EmoteLookup): Message | null {
     switch (line.command) {
         case 'PRIVMSG':
-            return chatMessage(line, badges);
+            return chatMessage(line, badges, emotes);
         case 'USERNOTICE':
-            return noticeOf(line);
+            return noticeOf(line, emotes);
         case 'CLEARCHAT':
             return banOf(line);
     }
@@ -72,7 +76,12 @@ export function loginOf(line: IrcLine): string {
     return bang > 0 ? line.prefix.slice(0, bang) : line.prefix;
 }
 
-function chatMessage(line: IrcLine, badges: BadgeLookup): Message | null {
+/** The line's channel's third-party emotes, if any */
+function finderOf(line: IrcLine, emotes?: EmoteLookup): EmoteFinder | null {
+    return emotes ? emotes((line.params[0] || '').slice(1)) : null;
+}
+
+function chatMessage(line: IrcLine, badges: BadgeLookup, emotes?: EmoteLookup): Message | null {
     var text = line.params[1];
     if (text === undefined) {
         return null;
@@ -85,7 +94,7 @@ function chatMessage(line: IrcLine, badges: BadgeLookup): Message | null {
     }
     var m = base('chat', line, loginOf(line));
     m.badges = badgesOf(line, badges);
-    m.parts = partsOf(text, line.tags.emotes || '');
+    m.parts = partsOf(text, line.tags.emotes || '', finderOf(line, emotes));
     if (action) {
         // Twitch's TV app draws a /me text in the colour as sent, only the name made readable
         m.action = validColor(line.tags.color || '') || DEFAULT_COLOR;
@@ -105,7 +114,7 @@ function noticeDrawn(line: IrcLine): boolean {
 }
 
 /** A notice is drawn without badges, its own words on the band and the sender's message (if any) under them */
-function noticeOf(line: IrcLine): Message | null {
+function noticeOf(line: IrcLine, emotes?: EmoteLookup): Message | null {
     if (!noticeDrawn(line)) {
         return null;
     }
@@ -126,7 +135,7 @@ function noticeOf(line: IrcLine): Message | null {
     }
     var m = base('notice', line, login);
     m.notice = words;
-    m.parts = line.params[1] ? partsOf(line.params[1], line.tags.emotes || '') : [];
+    m.parts = line.params[1] ? partsOf(line.params[1], line.tags.emotes || '', finderOf(line, emotes)) : [];
     return m;
 }
 
@@ -185,11 +194,11 @@ interface Range {
 }
 
 /** The text as parts: the emotes tag's ranges ("id:0-4,6-10/id2:12-15", code point positions, ends included) as
- * emotes, links in the rest */
-export function partsOf(text: string, emotes: string): Part[] {
+ * emotes, links and the words extra knows as its emotes in the rest */
+export function partsOf(text: string, emotes: string, extra?: EmoteFinder | null): Part[] {
     var parts: Part[] = [];
     if (!emotes) {
-        addText(parts, text);
+        addText(parts, text, extra);
         return parts;
     }
     var ranges: Range[] = [];
@@ -221,13 +230,13 @@ export function partsOf(text: string, emotes: string): Part[] {
             continue;
         }
         if (from > pos) {
-            addText(parts, text.slice(pos, from));
+            addText(parts, text.slice(pos, from), extra);
         }
         parts.push({ kind: 'emote', name: text.slice(from, to), url: EMOTE_URL + ranges[r].id + '/static/dark/2.0' });
         pos = to;
     }
     if (pos < text.length) {
-        addText(parts, text.slice(pos));
+        addText(parts, text.slice(pos), extra);
     }
     return parts;
 }
@@ -249,28 +258,53 @@ function codePointOffsets(text: string): number[] {
 /** Addresses: with a scheme, www., or a name ending in a common top-level domain */
 var LINK = /^(?:https?:\/\/\S+|www\.\S+\.\S+|(?:[a-z0-9-]+\.)+(?:com|net|org|tv|gg|io|me|co|uk|de|fr|es|it|nl|se|no|dk|fi|pl|ru|jp|kr|br|ca|au|ly|be|gl|to|app|dev|xyz|info)(?:\/\S*)?)$/i;
 
-/** Text, with its addresses as link parts */
-function addText(parts: Part[], words: string): void {
-    if (words.indexOf('.') === -1) {
+/** Between words */
+var SPACES = /(\s+)/;
+
+/** Text, with its addresses as link parts and the words extra knows as its emotes; a zero-width emote right after
+ * an emote goes over it (the space between them left out). Plain stretches are cut from words as they are */
+function addText(parts: Part[], words: string, extra?: EmoteFinder | null): void {
+    if (!extra && words.indexOf('.') === -1) {
         parts.push(textPart(words));
         return;
     }
-    var pieces = words.split(/(\s+)/);
-    var plain = '';
+    var pieces = words.split(SPACES);
+    /** Where the plain stretch starts, where this piece starts, and whether the stretch has spaces only */
+    var from = 0;
+    var at = 0;
+    var spaces = true;
     for (var i = 0; i < pieces.length; i++) {
-        if (i % 2 === 0 && pieces[i] && LINK.test(pieces[i])) {
-            if (plain) {
-                parts.push(textPart(plain));
-                plain = '';
+        var piece = pieces[i];
+        var word = i % 2 === 0 && piece !== '';
+        var emote = word && extra ? extra(piece) : null;
+        if (emote || word && piece.indexOf('.') >= 0 && LINK.test(piece)) {
+            var over = !!emote && emote.over && spaces && parts.length > 0 && parts[parts.length - 1].kind === 'emote';
+            if (at > from && !over) {
+                parts.push(textPart(words.slice(from, at)));
             }
-            parts.push({ kind: 'link', text: pieces[i] });
-        } else {
-            plain += pieces[i];
+            parts.push(emote ? emotePart(piece, emote, over) : { kind: 'link', text: piece });
+            from = at + piece.length;
+            spaces = true;
+        } else if (word) {
+            spaces = false;
         }
+        at += piece.length;
     }
-    if (plain) {
-        parts.push(textPart(plain));
+    if (from < words.length) {
+        parts.push(textPart(from ? words.slice(from) : words));
     }
+}
+
+/** A third-party emote's part: its ratio when it is not square, over when drawn over the emote before it */
+function emotePart(name: string, emote: ChatEmote, over: boolean): Part {
+    var part: Part = { kind: 'emote', name: name, url: emote.url };
+    if (emote.ratio !== 1) {
+        part.ratio = emote.ratio;
+    }
+    if (over) {
+        part.over = true;
+    }
+    return part;
 }
 
 /** What a CLEARMSG or CLEARCHAT deletes: one message (ids), all of a login's, or the whole chat (neither) */

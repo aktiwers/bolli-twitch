@@ -1,6 +1,6 @@
 // A past broadcast, highlight or upload as its player draws it: title, channel (avatar, name, Follow state),
 // category, date, views, length, the content gate and, signed in, where the account stopped. No playback token:
-// the player asks its own with an ad-free player type.
+// the player asks its own (player/session.ts).
 
 import { gql, notFound } from './gql.js';
 import { Video } from './types.js';

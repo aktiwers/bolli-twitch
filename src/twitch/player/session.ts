@@ -1,9 +1,10 @@
 // One playback at a time on the app's video: a live channel, a past broadcast or a clip. The session resolves the
-// stream: a token as an ad-free player type (popout first, or the one that last played without ads in this run of
-// the app), the master through usher (v1, or v2 once v1 fails in a way the token does not explain), its qualities,
-// and, before any engine starts, the start quality's media playlist (ads there: the next player type). Around the
-// engines it owns the policy: which engine plays (engineFor: hls.js for live streams and past broadcasts wherever
-// Media Source exists, the TV's own player for clips), ads that show up later (the next player type), one retry
+// stream: a token as one of the player types (popout first, or the one that last played without stitched segments in
+// this run of the app), the master through usher (v1, or v2 once v1 fails in a way the token does not explain), its
+// qualities, and, before any engine starts, the start quality's media playlist (stitched segments there: the next
+// player type). Around the engines it owns the policy: which engine plays (engineFor: hls.js for live streams and past
+// broadcasts wherever Media Source exists, the TV's own player for clips), stitched segments that show up later (the
+// next player type), one retry
 // budget per failure episode, the remembered quality, and what is the same for every engine (seek, pause, position,
 // buffer). A worker that cannot start sends past broadcasts to the TV's own player for the rest of the run, while a
 // live stream fails as not playable here (on the TV's own player it freezes on its first picture). Every engine start
@@ -24,9 +25,9 @@ import { load, save } from '../../core/store.js';
 import { releaseVideo } from '../../player/video.js';
 import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
-import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, UsherVersion } from '../api/playback.js';
-import { aheadOf, Engine, EngineEvents, Failure, FailureKind, playVideo, Quality, showVideo, Source } from './engine.js';
-import { mediaSourcePlays, parseQualities, pastBroadcast, segmentStart } from './master.js';
+import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, usherCode, UsherVersion } from '../api/playback.js';
+import { aheadOf, Delay, Engine, EngineEvents, Failure, FailureKind, Fetched, playVideo, Quality, showVideo, Source } from './engine.js';
+import { liveTarget, mediaSourcePlays, mutedRanges, parseQualities, pastBroadcast, segmentStart } from './master.js';
 import { hasAds, markAdGaps } from './ads.js';
 import { SegmentAhead, segmentAhead } from './segment.js';
 import { stabilize } from './stable-volume.js';
@@ -65,10 +66,12 @@ export interface SessionEvents {
     paused?(): void;
     /** A past broadcast played to its end */
     ended?(): void;
+    /** A past broadcast went into a stretch Twitch muted for copyrighted audio (true), or out of it */
+    muted?(on: boolean): void;
     /** The qualities (best first), the one picked (-1 Auto) and the one playing (-1 not known yet): the menu's
      * Auto (720p60) */
     qualities?(list: Quality[], picked: number, playing: number): void;
-    /** Another ad-free player type plays now (ads showed up, or one was refused) */
+    /** Another player type plays now (stitched segments showed up, or one was refused) */
     playerTypeChanged?(playerType: string): void;
     /** The picture waited for data after it had played; action: what was done about it ('' nothing) */
     stalled?(action: string): void;
@@ -83,7 +86,7 @@ export interface PlaybackState {
     kind: 'live' | 'vod' | 'clip';
     id: string;
     engine: EngineName;
-    /** The ad-free player type playing ('' for a clip) */
+    /** The player type playing ('' for a clip) */
     playerType: string;
     /** The usher version playing ('' for a clip) */
     usher: UsherVersion | '';
@@ -99,7 +102,7 @@ export interface PlaybackState {
     droppedFrames: number;
     decodedFrames: number;
     paused: boolean;
-    /** How often ads showed up (each time the next player type was asked) */
+    /** How often stitched segments showed up (each time the next player type was asked) */
     adBreaks: number;
     /** Engine starts in this playback (a hand-over adds none) */
     starts: number;
@@ -113,7 +116,7 @@ var QUALITY_KEY = 'twitch.quality';
 var AHEAD_MS = 60 * 1000;
 /** A live stream started ahead and not claimed stops after this: it would download for as long as focus rests */
 var READY_LIVE_MS = 20 * 1000;
-/** A live stream on the TV's own player has its playlist looked at for ads this often */
+/** A live stream on the TV's own player has its playlist looked at for stitched segments this often */
 var AD_CHECK_MS = 20 * 1000;
 /** Network and media failures tried again per failure episode */
 var RETRIES = 2;
@@ -128,16 +131,20 @@ interface Resolved {
     text: string;
     qualities: Quality[];
     /** A past broadcast's start quality's media playlist, fetched ahead with it (it does not change) */
-    level?: { url: string; text: string };
+    level?: Fetched;
     /** And the segment it starts in, being fetched */
     segment?: SegmentAhead;
 }
 
-/** An usher answer that is not a master: its status, and whether the token explains a refusal */
+/** An usher answer that is not a master: its status, whether the token explains a refusal, and usher's own code */
 interface UsherError {
     usherStatus: number;
     explained: boolean;
+    code: string;
 }
+
+/** Usher's codes for a past broadcast or stream kept for subscribers (as Twitch's TV app reads them) */
+var SUB_ONLY: { [code: string]: boolean } = { vod_manifest_restricted: true, unauthorized_entitlements: true };
 
 /** What a failure means: the failure to tell, or a step to try first; resolve: it came from resolving the stream */
 interface Outcome {
@@ -165,13 +172,13 @@ interface Playback {
     triedV2: boolean;
     triedGuest: boolean;
     /** The token is asked with the account (after a guest's was refused: subscribers only); else as a guest, whose
-     * ad-free player types carry no ads */
+     * player types carry no stitched segments */
     withAccount: boolean;
     /** Raised by every resolve: answers of an older one are dropped */
     resolving: number;
     /** Raised by every engine start: events of an older run are dropped */
     run: number;
-    /** The run whose ads were acted on */
+    /** The run whose stitched segments were acted on */
     adsRun: number;
     adBreaks: number;
     retries: number;
@@ -193,6 +200,9 @@ interface Playback {
     held: boolean;
     /** Started ahead for a resting tile (ready) and not claimed yet */
     ahead: boolean;
+    /** A past broadcast's stretches Twitch muted ([start, end] s), and whether it stands in one */
+    muted: number[][];
+    inMuted: boolean;
     failed: FailureKind | '';
     adTimer: number;
     retryTimer: number;
@@ -212,9 +222,9 @@ var makeEngine = function (name: EngineName, v: HTMLVideoElement): Engine {
 };
 var now: Playback | null = null;
 var ahead: { [key: string]: Ahead } = {};
-/** For the rest of the app's run: the player type that last played without ads, the usher version that worked when
- * v1 did not, a Media Source worker that could not start, the engine the test hook forced ('' none) and whether it
- * asks stream tokens with the account */
+/** For the rest of the app's run: the player type that last played without stitched segments, the usher version that
+ * worked when v1 did not, a Media Source worker that could not start, the engine the test hook forced ('' none) and
+ * whether it asks stream tokens with the account */
 var adFreeType = 0;
 var usherForRun: UsherVersion | null = null;
 var workerBroken = false;
@@ -262,6 +272,7 @@ export function videoElement(): HTMLVideoElement {
             // Only with data where it stands (HAVE_CURRENT_DATA): an unloaded or starting video says 0
             if (now && now.shown && now.target.kind !== 'live' && v.readyState >= 2) {
                 now.at = v.currentTime;
+                mutedNow(now, v.currentTime);
             }
         });
     }
@@ -302,8 +313,8 @@ export function forceEngine(name: EngineName | ''): void {
     forced = name;
 }
 
-/** Stream tokens asked with the account from the next start on in this run (signed in), as Twitch then puts ads in
- * the ad-free player types: the test hook's, to see ad breaks; never stored */
+/** Stream tokens asked with the account from the next start on in this run (signed in), as Twitch then stitches its
+ * segments into these player types too: the test hook's, to see them; never stored */
 export function forceAccount(on: boolean): void {
     accountForced = on;
 }
@@ -365,7 +376,7 @@ function resolveStream(target: Target, type: number, usher: UsherVersion, withAc
         return getText(r.url, 10000).then(function (text) {
             return { token: r.token, url: r.url, text: text, qualities: parseQualities(text, r.url) };
         }, function (e: HttpError) {
-            throw { usherStatus: e.status, explained: tokenRefuses(r.token) } as UsherError;
+            throw { usherStatus: e.status, explained: tokenRefuses(r.token), code: usherCode(e.body || '') } as UsherError;
         });
     });
 }
@@ -389,7 +400,7 @@ function withLevel(r: Resolved, at: number | undefined): Promise<Resolved> {
         return Promise.resolve(r);
     }
     return getText(first.url, 10000).then(function (text) {
-        r.level = { url: first.url, text: text };
+        r.level = { url: first.url, text: text, at: Date.now() };
         r.segment = at !== undefined ? segmentAhead(first.url, text, at) || undefined : undefined;
         return r;
     }, function () {
@@ -511,7 +522,7 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
         triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
         startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, wentOnAt: 0, paused: false, left: false, held: false,
-        ahead: false, failed: '', adTimer: 0, retryTimer: 0
+        ahead: false, muted: [], inMuted: false, failed: '', adTimer: 0, retryTimer: 0
     };
     applyOptions(p, opts);
     drawVideo();
@@ -547,9 +558,26 @@ function moveTo(p: Playback, at: number | undefined): void {
     }
 }
 
+/** Tells p's screen when it goes into or out of a stretch Twitch muted */
+function mutedNow(p: Playback, at: number): void {
+    var on = false;
+    for (var i = 0; i < p.muted.length && !on; i++) {
+        on = at >= p.muted[i][0] && at < p.muted[i][1];
+    }
+    if (on !== p.inMuted) {
+        p.inMuted = on;
+        if (p.events.muted) {
+            p.events.muted(on);
+        }
+    }
+}
+
 /** Tells new events where a handed-over playback stands */
 function replay(p: Playback): void {
     var e = p.events;
+    if (p.inMuted && e.muted) {
+        e.muted(true);
+    }
     if (p.source && e.qualities) {
         e.qualities(p.source.qualities, p.source.quality, p.engine ? p.engine.current() : -1);
     }
@@ -608,8 +636,8 @@ function startClip(p: Playback): void {
     });
 }
 
-/** Token, master and the start quality's media playlist as the current player type; ads there move on to the next
- * player type before any engine starts */
+/** Token, master and the start quality's media playlist as the current player type; stitched segments there move on
+ * to the next player type before any engine starts */
 function startStream(p: Playback): void {
     var attempt = ++p.resolving;
     (takeAhead(p) || resolveStream(p.target, p.type, p.usher, p.withAccount)).then(function (r) {
@@ -627,14 +655,14 @@ function startStream(p: Playback): void {
         var source: Source = { kind: p.target.kind, url: r.url, master: r.text, qualities: list, quality: rememberedIndex(list), maxHeight: height };
         var live = p.target.kind === 'live';
         if (!live && p.engineName === 'native') {
-            // No ads to look for, and the TV's player fetches the playlist itself
+            // Nothing stitched to look for, and the TV's player fetches the playlist itself
             startEngine(p, source, r.token, true);
             return undefined;
         }
         var pick = pickUnder(list, source.quality, height);
         var first = list[pick >= 0 ? pick : fitQuality(list, bandwidth(), height)];
-        var kept = r.level && r.level.url === first.url ? r.level.text : null;
-        return (kept !== null ? Promise.resolve(kept) : getText(first.url, 10000)).then(function (text) {
+        var kept = r.level && r.level.url === first.url ? r.level : null;
+        return (kept ? Promise.resolve(kept.text) : getText(first.url, 10000)).then(function (text) {
             if (stale(p, attempt)) {
                 return;
             }
@@ -644,11 +672,14 @@ function startStream(p: Playback): void {
                 nextType(p);
                 return;
             }
-            source.level = { url: first.url, text: text };
-            if (kept !== null && r.segment) {
+            source.level = { url: first.url, text: text, at: kept ? kept.at : Date.now() };
+            if (!live) {
+                p.muted = mutedRanges(text);
+            }
+            if (kept && r.segment) {
                 source.segment = r.segment;
             }
-            // Ads in the last player type too: it plays (their segments left out) but is not remembered
+            // Stitched segments in the last player type too: it plays (those left out) but is not remembered
             startEngine(p, source, r.token, !ads);
         }, function () {
             // The engine asks for it again and tells what is wrong
@@ -663,8 +694,8 @@ function startStream(p: Playback): void {
     });
 }
 
-/** Asks the stream again as the next ad-free player type (remembered for the app's run once it starts without ads);
- * false after the last one, and for a clip (one query, no player types) */
+/** Asks the stream again as the next player type (remembered for the app's run once it starts without stitched
+ * segments); false after the last one, and for a clip (one query, no player types) */
 function nextType(p: Playback): boolean {
     if (p.target.kind === 'clip' || p.type >= PLAYER_TYPES.length - 1) {
         return false;
@@ -674,7 +705,8 @@ function nextType(p: Playback): boolean {
     return true;
 }
 
-/** Ads showed up in what plays: the next player type (meanwhile the Media Source engine leaves them out) */
+/** Stitched segments showed up in what plays: the next player type (meanwhile the Media Source engine leaves them
+ * out) */
 function adsShowedUp(p: Playback): void {
     if (p.adsRun !== p.run) {
         p.adsRun = p.run;
@@ -683,14 +715,15 @@ function adsShowedUp(p: Playback): void {
     }
 }
 
-/** A live stream's media playlists on the Media Source engine: ad segments become gaps, and the session is told */
-function adFilter(p: Playback): (text: string) => string {
+/** A live stream's media playlists on the Media Source engine: stitched segments become gaps (the session is told),
+ * and the target duration is the real segments' (master.ts liveTarget) */
+function liveFilter(p: Playback): (text: string) => string {
     return function (text: string): string {
         var r = markAdGaps(text);
         if (r.ads && p === now) {
             adsShowedUp(p);
         }
-        return r.text;
+        return liveTarget(r.text);
     };
 }
 
@@ -704,8 +737,9 @@ function vodFilter(p: Playback): (text: string) => string {
 }
 
 /** Starts p's engine on source. token: a new one for it, which was asked as p's player type; adFree: that start was
- * seen without ads (only then is its player type remembered for the run). The options may have changed since source
- * was made (a hand-over), and a past broadcast or clip that showed a picture starts where the viewer was. */
+ * seen without stitched segments (only then is its player type remembered for the run). The options may have changed
+ * since source was made (a hand-over), and a past broadcast or clip that showed a picture starts where the viewer
+ * was. */
 function startEngine(p: Playback, source: Source, token: Token | null, adFree?: boolean): void {
     var v = videoElement();
     var engine = engineOf(p.engineName);
@@ -737,7 +771,7 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
         }
     }
     if (source.kind === 'live' && p.engineName === 'mse') {
-        source.filter = adFilter(p);
+        source.filter = liveFilter(p);
     } else if (source.kind === 'vod' && p.engineName === 'mse') {
         source.filter = vodFilter(p);
     }
@@ -801,8 +835,8 @@ function engineEvents(p: Playback, run: number): EngineEvents {
     };
 }
 
-/** A live stream on the TV's own player: its playlist looked at for ads every AD_CHECK_MS from the first picture on
- * (the start was checked already), not while paused or in the background */
+/** A live stream on the TV's own player: its playlist looked at for stitched segments every AD_CHECK_MS from the
+ * first picture on (the start was checked already), not while paused or in the background */
 function watchAds(p: Playback): void {
     if (p.adTimer || p.engineName !== 'native' || p.target.kind !== 'live' || p.type >= PLAYER_TYPES.length - 1) {
         return;
@@ -866,6 +900,10 @@ function classify(p: Playback, e: unknown): Outcome {
         if (s === 404) {
             return { failure: failure('offline', said) };
         }
+        if (s === 403 && SUB_ONLY[u.code] === true) {
+            // A subscriber's account may watch it
+            return { failure: failure('subonly', said + ' ' + u.code), next: accountMay(p) ? 'account' : undefined };
+        }
         if (s === 403 && u.explained) {
             return { failure: failure('forbidden', said), next: accountMay(p) ? 'account' : undefined };
         }
@@ -912,7 +950,7 @@ function failed(p: Playback, o: Outcome): void {
         return;
     }
     if (o.resolve && p.shown && p.engine && p.playingType !== p.type) {
-        // Moving on from ads cannot be done: what plays goes on (the Media Source engine leaves the ads out)
+        // Moving on cannot be done: what plays goes on (the Media Source engine leaves the stitched segments out)
         p.type = p.playingType;
         return;
     }
@@ -968,6 +1006,18 @@ function retry(p: Playback, f: Failure): boolean {
         }
     }, RETRY_MS * p.retries) as unknown as number;
     return true;
+}
+
+/** Whether a picture plays in sight: a playback runs at its place, not held under another screen, moving, the app in
+ * front (the screensaver and watch time ask; the video is not made for it) */
+export function pictureRuns(): boolean {
+    var v = video;
+    return !!v && !!placed && !!now && !now.held && !v.paused && !v.ended && !v.error && v.readyState > 2 && !document.hidden;
+}
+
+/** How far the live stream that plays is behind (the test hook), or null */
+export function liveDelay(): Delay | null {
+    return now && now.engine && now.engine.liveDelay ? now.engine.liveDelay() : null;
 }
 
 /** Whether what plays was started, or last claimed, with these events: a screen stops the playback only while it
