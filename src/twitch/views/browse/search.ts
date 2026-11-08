@@ -175,6 +175,7 @@ export class SearchView implements Screen {
         return this.term ? this.stack.index === 0 : this.place === 'go';
     }
 
+    /** Focus on it (also back from a player): the focused tile rests again; on the menu: nothing rests */
     setFocused(focused: boolean): void {
         this.focused = focused;
         if (!focused) {
@@ -182,6 +183,9 @@ export class SearchView implements Screen {
             this.rest.cancel();
         }
         this.mark();
+        if (focused) {
+            this.restSoon();
+        }
     }
 
     /** OK on Try Again: the results asked again */

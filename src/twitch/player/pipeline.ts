@@ -122,6 +122,14 @@ export function keepPipeline(video: HTMLVideoElement, t: Transfer | null): void 
     });
 }
 
+/** Whether t's buffers fit a stream with this media playlist: hls.js buffers an fMP4 stream (one with an init
+ * segment) as it comes, audio and video together, and a TS stream's tracks apart. Over buffers that do not fit it
+ * opens a new source but keeps the last video's time, so the stream would start where the last one stood */
+export function fits(t: Transfer, playlist: string): boolean {
+    var both = t.tracks.audiovideo;
+    return (playlist.indexOf('#EXT-X-MAP') >= 0) === !!(both && both.buffer);
+}
+
 /** The kept pipeline once it is emptied, taken over (null: none, or no longer usable) */
 export function takePipeline(): Promise<Transfer | null> {
     return emptied.then(function () {
@@ -138,6 +146,15 @@ export function takePipeline(): Promise<Transfer | null> {
         pipelineStats.taken++;
         return t;
     });
+}
+
+/** A taken pipeline not used (it does not fit): its source's object URL goes; the next source replaces it */
+export function dropPipeline(t: Transfer): void {
+    pipelineStats.released++;
+    var src = t.media.getAttribute('src') || '';
+    if (src.indexOf('blob:') === 0) {
+        URL.revokeObjectURL(src);
+    }
 }
 
 /** Lets the kept pipeline go; replaced: a new source goes into the video right after (one reset, not two) */

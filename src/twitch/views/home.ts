@@ -135,8 +135,14 @@ export class HomeView implements Screen {
         return this.rows.stack.index === 0;
     }
 
+    /** Focus on the rows (also back from a player): the focused tile rests again; on the menu: nothing rests */
     setFocused(focused: boolean): void {
         this.rows.setFocused(focused);
+        if (focused) {
+            this.fetchAheadSoon();
+        } else {
+            this.rest.cancel();
+        }
     }
 
     retry(): boolean {

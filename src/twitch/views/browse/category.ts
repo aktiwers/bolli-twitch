@@ -141,9 +141,15 @@ export class CategoryPage implements Screen {
         return this.place !== 'grid';
     }
 
+    /** Focus on it (also back from a player): the focused tile rests again; on the menu: nothing rests */
     setFocused(focused: boolean): void {
         this.focused = focused;
         this.mark();
+        if (focused && this.place === 'grid') {
+            this.rest.item(this.grid.focusedItem, this.nav.ahead);
+        } else if (!focused) {
+            this.rest.cancel();
+        }
     }
 
     /** Signed in or out: the header again, with the account's Follow state */
@@ -206,6 +212,7 @@ export class CategoryPage implements Screen {
             this.rest.item(grid.focusedItem, this.nav.ahead);
         } else if (code === KEY.UP) {
             this.place = 'follow';
+            this.rest.cancel();
             this.mark();
         }
         return true;

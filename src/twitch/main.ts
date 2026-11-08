@@ -49,7 +49,8 @@ import { HomeView } from './views/home.js';
 import { MenuItem, TopMenu } from './views/menu.js';
 import { ErrorKind, Navigator, Screen } from './views/navigator.js';
 import { initOffline } from './views/offline.js';
-import { openPlayer } from './views/player/open.js';
+import { openPlayer, playAhead, prefetchClip } from './views/player/open.js';
+import { startOf } from './views/player/resume.js';
 import './player/test-hook.js';
 
 // The version (written in by tools/build_app.mjs), on the page for checks
@@ -100,16 +101,25 @@ var openers: { [kind: string]: (item: Item, nav: Navigator) => Screen | null } =
     clip: openPlayer
 };
 
-/** What focus resting on a tile fetches ahead, by the tile's kind: what its opener draws or plays first */
+/** What focus resting on a tile fetches ahead, by the tile's kind: what its opener draws or plays first (a stream or
+ * video: its playback too, out of sight, which takes the stream fetched here) */
 var aheads: { [kind: string]: (item: Item) => Promise<unknown> } = {
     stream: function (item: Item): Promise<unknown> {
-        return prefetch({ kind: 'live', id: (item as Extract<Item, { kind: 'stream' }>).stream.channel.login });
+        var fetched = prefetch({ kind: 'live', id: (item as Extract<Item, { kind: 'stream' }>).stream.channel.login });
+        playAhead(item);
+        return fetched;
     },
     video: function (item: Item): Promise<unknown> {
-        return prefetch({ kind: 'vod', id: (item as Extract<Item, { kind: 'video' }>).video.id });
+        var v = (item as Extract<Item, { kind: 'video' }>).video;
+        var fetched = prefetch({ kind: 'vod', id: v.id, startAt: startOf(v) });
+        playAhead(item);
+        return fetched;
     },
     channel: function (item: Item): Promise<unknown> {
         return prefetchChannel((item as Extract<Item, { kind: 'channel' }>).channel.login);
+    },
+    clip: function (item: Item): Promise<unknown> {
+        return prefetchClip((item as Extract<Item, { kind: 'clip' }>).clip.slug);
     },
     game: function (item: Item): Promise<unknown> {
         return prefetchCategory((item as Extract<Item, { kind: 'game' }>).game);

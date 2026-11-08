@@ -42,7 +42,7 @@ import { icon } from './icons.js';
 import { OptionsPage } from './options.js';
 import { Prompt, PromptButton, PromptModel } from './prompt.js';
 import { QualityMenu } from './quality.js';
-import { keepPosition, resumeAt } from './resume.js';
+import { keepPosition, startOf } from './resume.js';
 import { Track } from './track.js';
 
 /** The overlay hides this long after the last key */
@@ -265,7 +265,7 @@ export class PlayerView implements Screen {
             this.title = v.title;
             this.gated = !!v.mature;
             this.restricted = !!v.restricted;
-            this.resumeAt = item.startAt !== undefined ? item.startAt : resumeAt(v.id) || v.position || 0;
+            this.resumeAt = item.startAt !== undefined ? item.startAt : startOf(v);
             this.target = { kind: 'vod', id: v.id };
         } else {
             var c = item.clip;

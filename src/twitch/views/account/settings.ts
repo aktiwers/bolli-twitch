@@ -11,6 +11,7 @@ import { extraNotices, setExtraNotices } from '../../chat/parse.js';
 import { rememberedQuality, rememberQuality, setUsher, usherPref } from '../../player/session.js';
 import { MenuMode, Navigator, Screen } from '../navigator.js';
 import { setSkipsGate, skipsGate } from '../player/gate.js';
+import { canStabilize, setStableVolume, stableVolume } from '../../player/stable-volume.js';
 import { loadQr, QrPage, SETTINGS_PAGES } from '../qr.js';
 import { Card, CardList } from './cards.js';
 import { ProfileView } from './profile.js';
@@ -76,6 +77,19 @@ var GATE: Setting = {
     }
 };
 
+var STABLE: Setting = {
+    icon: 'volume',
+    title: 'Stable Volume',
+    values: ['on', 'off'],
+    now: function () { return stableVolume() ? 'on' : 'off'; },
+    set: function (v) { setStableVolume(v === 'on'); },
+    label: onOff,
+    line: function (v) {
+        return v === 'on' ? 'Quiet streams come up and loud ones down, so streams play at about the same level.' :
+            'Streams play as loud as each streamer sends them.';
+    }
+};
+
 var USHER: Setting = {
     icon: 'usher',
     title: 'Stream Requests',
@@ -88,7 +102,8 @@ var USHER: Setting = {
     }
 };
 
-var SETTINGS = [NOTICES, GATE, USHER];
+/** Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there) */
+var SETTINGS = canStabilize() ? [NOTICES, GATE, STABLE, USHER] : [NOTICES, GATE, USHER];
 
 /** The remembered quality as Twitch names it (1080p60, 720p), or '' for none */
 function remembered(): string {

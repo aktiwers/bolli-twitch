@@ -1,12 +1,17 @@
 // Loads Bolli Twitch's hls.js (apps/bolli-twitch/hls/hls.js, built by tools/twitch_hls.mjs) once, when a playback on
 // the Media Source engine starts or is prefetched, so the app's own script stays small; then starts its segment worker
 // once and keeps it for the app's run (every hls.js instance shares it, so a stopped one can be destroyed at once).
-// Also the part of hls.js's API the engine uses.
+// Android's WebView starts no worker from a file:// address (the page's own), so there the worker's text is read and
+// started from a Blob. Also the part of hls.js's API the engine uses.
+
+import { android } from '../../core/platform.js';
 
 /** One quality as hls.js lists it (its levels are sorted by bitrate, lowest first) */
 export interface HlsLevel {
     /** Its media playlist (first) */
     url: string[];
+    /** Its media playlist read: the segments, where each begins and how long it is (s) */
+    details?: { fragments: { start: number; duration: number }[] };
 }
 
 export interface HlsInstance {
@@ -38,7 +43,9 @@ export interface HlsStatic {
 
 /** The bundle and its worker, beside index.html */
 var HLS_SCRIPT = 'hls/hls.js';
-export var HLS_WORKER = 'hls/hls-worker.js';
+var HLS_WORKER = 'hls/hls-worker.js';
+/** The worker's address as started: its file, or on Android a Blob of its text (hls.js's workerPath must be the same) */
+var workerUrl = HLS_WORKER;
 
 var loading: Promise<HlsStatic> | null = null;
 var workerBroken = false;
@@ -61,7 +68,7 @@ function broke(): void {
  * on (hls.js tells that error itself). */
 function startWorker(Hls: HlsStatic): void {
     try {
-        var worker = Hls.loadWorker(HLS_WORKER).worker;
+        var worker = Hls.loadWorker(workerUrl).worker;
         var answered = function (): void {
             workerRan = true;
             worker.removeEventListener('message', answered);
@@ -91,9 +98,12 @@ export function loadHls(): Promise<HlsStatic> {
             var script = document.createElement('script');
             script.src = HLS_SCRIPT;
             script.onload = function () {
-                if (w.BolliHls) {
-                    startWorker(w.BolliHls);
-                    resolve(w.BolliHls);
+                var Hls = w.BolliHls;
+                if (Hls) {
+                    workerSource().then(function () {
+                        startWorker(Hls as HlsStatic);
+                        resolve(Hls as HlsStatic);
+                    });
                 } else {
                     loading = null;
                     reject('hls');
@@ -107,6 +117,33 @@ export function loadHls(): Promise<HlsStatic> {
         });
     }
     return loading;
+}
+
+/** The worker's address for hls.js's workerPath (the one it was started from) */
+export function workerPath(): string {
+    return workerUrl;
+}
+
+/** On Android the worker's text as a Blob's address (workerUrl); settles either way (failing, the worker fails) */
+function workerSource(): Promise<void> {
+    if (!android()) {
+        return Promise.resolve(undefined);
+    }
+    return new Promise<void>(function (resolve) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', HLS_WORKER);
+        xhr.onload = function () {
+            // A file:// read says status 0
+            if ((xhr.status === 0 || xhr.status === 200) && xhr.responseText) {
+                workerUrl = URL.createObjectURL(new Blob([xhr.responseText], { type: 'text/javascript' }));
+            }
+            resolve(undefined);
+        };
+        xhr.onerror = function () {
+            resolve(undefined);
+        };
+        xhr.send();
+    });
 }
 
 /** Whether the worker failed (the session then plays past broadcasts on the TV's own player; live fails) */

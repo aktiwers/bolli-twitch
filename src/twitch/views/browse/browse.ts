@@ -110,8 +110,14 @@ export class BrowseView implements Screen {
         return this.grid.row === 0;
     }
 
+    /** Focus on it (also back from a player): the focused tile rests again; on the menu: nothing rests */
     setFocused(focused: boolean): void {
         this.paged.setFocused(focused);
+        if (focused) {
+            this.rest.item(this.grid.focusedItem, this.nav.ahead);
+        } else {
+            this.rest.cancel();
+        }
     }
 
     retry(): boolean {

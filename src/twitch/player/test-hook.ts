@@ -8,6 +8,7 @@
 //                                                ('' the policy's; never stored); returns what each kind starts on
 //   usher('v1' | 'v2' | '')                      the usher version to start with ('' the default)
 //   account(on)                                  stream tokens asked with the account (signed in) in this run: ads
+//   levels(ms)                                   Stable Volume's input and output level over ms (dB RMS and peak; Android)
 //   quality(index), seek(s), pause(), resume(), debug(on) (hls.js's warnings on the console)
 //   state()                                      the session's state, first picture, stalls, seeks, pipelines, events
 // It prints no token, signature or stream address.
@@ -20,6 +21,7 @@ import { pipelineStats } from './pipeline.js';
 import { adStats } from './ads.js';
 import { Failure, Quality } from './engine.js';
 import { setHlsDebug } from './mse-engine.js';
+import { audioGraph } from './stable-volume.js';
 
 var MAX_EVENTS = 40;
 /** A preview's box and the whole screen, in layout units */
@@ -130,6 +132,44 @@ var api = {
     },
     account: function (on: boolean): void {
         session.forceAccount(on);
+    },
+    levels: function (ms: number): Promise<{ [name: string]: number }> | null {
+        var g = audioGraph();
+        if (!g) {
+            return null;
+        }
+        var ctx = g.ctx;
+        var meters = [g.source, g.out].map(function (node) {
+            var an = ctx.createAnalyser();
+            an.fftSize = 2048;
+            node.connect(an);
+            return { node: node, an: an, sum: 0, count: 0, peak: 0 };
+        });
+        var buf = new Float32Array(2048);
+        var timer = setInterval(function () {
+            for (var i = 0; i < meters.length; i++) {
+                var m = meters[i];
+                (m.an as AnalyserNode & { getFloatTimeDomainData(a: Float32Array): void }).getFloatTimeDomainData(buf);
+                for (var j = 0; j < buf.length; j++) {
+                    m.sum += buf[j] * buf[j];
+                    m.peak = Math.max(m.peak, Math.abs(buf[j]));
+                }
+                m.count += buf.length;
+            }
+        }, 40);
+        var db = function (x: number): number {
+            return Math.round(20 * Math.log(Math.max(x, 1e-6)) / Math.LN10 * 10) / 10;
+        };
+        return new Promise(function (resolve) {
+            setTimeout(function () {
+                clearInterval(timer);
+                for (var i = 0; i < meters.length; i++) {
+                    meters[i].node.disconnect(meters[i].an);
+                }
+                resolve({ inRms: db(Math.sqrt(meters[0].sum / (meters[0].count || 1))), inPeak: db(meters[0].peak),
+                    outRms: db(Math.sqrt(meters[1].sum / (meters[1].count || 1))), outPeak: db(meters[1].peak) });
+            }, ms);
+        });
     },
     quality: function (index: number): void {
         session.setQuality(index);

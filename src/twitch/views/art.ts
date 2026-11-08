@@ -25,6 +25,7 @@ var HEART = 'M34 50C8 32 12 8 34 20C56 8 60 32 34 50Z';
 var PENCIL = 'M10 54l3.5-13L42 12.5a4.6 4.6 0 0 1 6.5 0l3 3a4.6 4.6 0 0 1 0 6.5L23 50.5Z';
 var GHOST = 'M16 52V26a17 17 0 0 1 34 0v26l-5.6-4.4-5.6 4.4-5.6-4.4-5.6 4.4-5.6-4.4Z';
 var BAG = '<rect x="20" y="24" width="32" height="30" rx="4"/>';
+var SPEAKER = 'M10 24h10l14-11v38L20 40H10Z';
 var HAND = 'M19 34V17a3.5 3.5 0 0 1 7 0v10V12a3.5 3.5 0 0 1 7 0v15V14a3.5 3.5 0 0 1 7 0v14V19a3.5 3.5 0 0 1 7 0v19c0 9-6 15-15 15h-2c-6 0-9-3-12-8l-7-10a3.5 3.5 0 0 1 5.5-4l5 5';
 
 var ICONS: { [name: string]: string } = {
@@ -34,10 +35,11 @@ var ICONS: { [name: string]: string } = {
     privacy: duo('<path d="' + GHOST + '"/>', '<path d="' + GHOST + '"/>',
         '<circle cx="28" cy="28" r="3.2" fill="currentColor"/><circle cx="39" cy="28" r="3.2" fill="currentColor"/>'),
     cookies: duo(BAG, '<path d="M28 24v-5a8 8 0 0 1 16 0v5"/>', '<rect x="20" y="24" width="32" height="30" rx="4" fill="currentColor"/>'),
-    // Bolli's own settings in the same style: a chat bubble, a raised hand, a stack of servers, a screen, an i
+    // Bolli's own settings in the same style: a chat bubble, a raised hand, a speaker, a stack of servers, a screen, an i
     notices: duo('<path d="M12 12h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H28l-10 8v-8h-6a4 4 0 0 1-4-4V16a4 4 0 0 1 4-4Z"/>',
         '<path d="M16 8h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H32l-10 8v-8h-6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4Z"/>'),
     gate: duo('<path d="' + HAND + '"/>', '<path d="' + HAND + '"/>'),
+    volume: duo('<path d="' + SPEAKER + '"/>', '<path d="' + SPEAKER + '"/><path d="M42 22a12 12 0 0 1 0 20M48 15a21 21 0 0 1 0 34"/>'),
     usher: duo('<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/>',
         '<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/><path d="M20 18h4M20 40h4"/>'),
     quality: duo('<rect x="10" y="10" width="44" height="30" rx="3"/>', '<rect x="10" y="10" width="44" height="30" rx="3"/><path d="M24 52h16M32 40v12"/>'),

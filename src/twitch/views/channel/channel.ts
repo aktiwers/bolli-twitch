@@ -177,9 +177,15 @@ export class ChannelView implements Screen {
         return !this.inRows && !this.confirm.open;
     }
 
+    /** Focus on it (also back from a player): the focused tile rests again; on the menu: nothing rests */
     setFocused(focused: boolean): void {
         this.focused = focused;
         this.mark();
+        if (focused) {
+            this.restSoon();
+        } else {
+            this.rest.cancel();
+        }
     }
 
     /** OK on Try Again (no page at all), or the network back: also a kept copy waiting to be asked again */

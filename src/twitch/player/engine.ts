@@ -2,6 +2,8 @@
 // on hls.js both implement it. The session resolves the stream (token, master, qualities, ads) and does what is the
 // same for both on the video itself (seek, pause, position, buffer, duration); an engine plays a source.
 
+import { SegmentAhead } from './segment.js';
+
 /** One quality of a stream (a master playlist's variant) or one file of a clip */
 export interface Quality {
     /** As Twitch's menu shows it: 1080p60, 720p60, 480p, 360p, 160p */
@@ -44,6 +46,8 @@ export interface Source {
     maxHeight: number;
     /** A media playlist the session already fetched (its ad check), handed to hls.js once instead of a fetch */
     level?: { url: string; text: string };
+    /** A past broadcast's first segment fetched ahead, handed to hls.js once when it asks for that address */
+    segment?: SegmentAhead;
     /** Live streams on the Media Source engine: every media playlist goes through it (ad segments become gaps) */
     filter?: (text: string) => string;
 }
@@ -75,6 +79,8 @@ export interface Engine {
     paused(on: boolean): void;
     /** Stops and hides the video (the Media Source engine keeps its pipeline for the next start) */
     stop(): void;
+    /** Where a seek to seconds lands (none: there) */
+    seekTarget?(seconds: number): number;
 }
 
 /** Seconds buffered ahead of the video's playhead */

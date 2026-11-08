@@ -66,6 +66,43 @@ export function firstDateOnly(text: string): string {
     return next <= 0 ? text : text.slice(0, next) + text.slice(next).replace(/#EXT-X-PROGRAM-DATE-TIME:[^\n]*\n/g, '');
 }
 
+/** The segment holding at (s) in a media playlist, its durations added up as hls.js does: where it begins and its
+ * address as written; null when at lies past the last segment */
+export function segmentAt(text: string, at: number): { start: number; uri: string } | null {
+    var re = /#EXTINF:([\d.]+)/g;
+    var start = 0;
+    for (var m = re.exec(text); m; m = re.exec(text)) {
+        var next = start + parseFloat(m[1]);
+        if (next > at) {
+            return { start: start, uri: addressAfter(text, m.index) };
+        }
+        start = next;
+    }
+    return null;
+}
+
+/** Where the segment holding at begins; at itself past the last segment */
+export function segmentStart(text: string, at: number): number {
+    var segment = segmentAt(text, at);
+    return segment ? segment.start : at;
+}
+
+/** The first line after the one at from that is not a tag or blank */
+function addressAfter(text: string, from: number): string {
+    for (var at = text.indexOf('\n', from) + 1; at > 0 && at < text.length;) {
+        var end = text.indexOf('\n', at);
+        if (end < 0) {
+            end = text.length;
+        }
+        var line = text.slice(at, end).trim();
+        if (line && line.charAt(0) !== '#') {
+            return line;
+        }
+        at = end + 1;
+    }
+    return '';
+}
+
 var END_TAG = '#EXT-X-ENDLIST';
 
 /** A past broadcast's media playlist for hls.js: its first date tag only, and an end when it has none (the broadcast

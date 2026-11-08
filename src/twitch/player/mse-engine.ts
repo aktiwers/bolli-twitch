@@ -8,9 +8,11 @@
 //   filter (ad segments become gaps),
 // - fMP4 segments made of low-latency chunks rewritten as one fragment before hls.js gets them (cmaf.ts: the TV's
 //   Media Source fails on the chunks),
+// - TS segments handed to hls.js's converter in parts (its progressive mode), so the first part is appended while
+//   the rest waits: the TV works through all of a first append before its first picture,
 // - quality changes that let what is buffered play on (no stall),
 // - the pipeline handed from video to video (pipeline.ts); on a taken pipeline the video still stands where the last
-//   one stopped, so once the first segment is in it is moved there with one seek (hls.js's own, or ours) and the
+//   one stopped, so once its start is in it is moved there with one seek (hls.js's own, or ours) and the
 //   source gets the new stream's duration, and hls.js's first fatal media error starts the stream again on a fresh
 //   pipeline (where the video stood); a stop hides the video, as the kept pipeline still shows the last picture (the
 //   session shows it again with the next first picture),
@@ -18,10 +20,11 @@
 // - paused, no loading (live at once; a past broadcast once its buffer is full).
 
 import { aheadOf, Engine, EngineEvents, Failure, hideVideo, playVideo, Source } from './engine.js';
-import { HLS_WORKER, HlsInstance, HlsStatic, loadHls, whenWorkerFails, workerFailed, workerRuns } from './hls-loader.js';
-import { keepPipeline, releasePipeline, takePipeline, Transfer } from './pipeline.js';
+import { HlsInstance, HlsStatic, loadHls, whenWorkerFails, workerFailed, workerPath, workerRuns } from './hls-loader.js';
+import { dropPipeline, fits, keepPipeline, releasePipeline, takePipeline, Transfer } from './pipeline.js';
 import { bandwidth, fitQuality, noteBandwidth, pickUnder, SHARE } from './bandwidth.js';
 import { mergeChunks } from './cmaf.js';
+import { Loaded, SegmentAhead } from './segment.js';
 import { whenKeysRest } from './rest.js';
 
 /** Live playback this far behind the end of the newest segment (Twitch's liveSyncDuration) */
@@ -33,6 +36,14 @@ var LIVE_AHEAD_S = 8;
 var VOD_BEHIND_S = 10;
 var LIVE_BEHIND_S = 6;
 var MAX_BUFFER_BYTES = 30 * 1000 * 1000;
+/** A TS segment goes to the converter in parts about this big (about 1.8 s of 1080p60: a 10 s past broadcast segment
+ * is six); a first append of one part shows its picture after 0.3 s instead of the whole segment's 1.7 s */
+var PART_BYTES = 1500 * 1000;
+/** A seek lands where it was asked when this much is buffered from there; else where its segment begins */
+var SEEK_AHEAD_S = 5;
+/** MPEG-TS packets: their size, and the byte each begins with */
+var TS_PACKET = 188;
+var TS_SYNC = 0x47;
 /** The field of hls.js's config the playlist loader reads the session's playlists from (not enumerable: hls.js posts
  * its config to the worker) */
 var PLAYLISTS = 'bolliPlaylists';
@@ -52,6 +63,8 @@ interface Playlists {
     level: { url: string; text: string } | null;
     /** Every media playlist goes through it */
     filter: ((text: string) => string) | null;
+    /** A segment fetched ahead: served instead of a fetch when its address is asked (once) */
+    segment: SegmentAhead | null;
 }
 
 /** A class around hls.js's own loader: the inner one loads (its stats, context, cache age, abort and destroy are the
@@ -70,6 +83,7 @@ function wrapLoader(Hls: HlsStatic, load: (this: any, context: any, config: unkn
         return this.inner.getCacheAge ? this.inner.getCacheAge() : null;
     };
     proto.abort = function (this: any) {
+        this.aborted = true;
         this.inner.abort();
     };
     proto.destroy = function (this: any) {
@@ -78,12 +92,17 @@ function wrapLoader(Hls: HlsStatic, load: (this: any, context: any, config: unkn
     return Wrapper;
 }
 
-/** hls.js's callbacks with the response's data changed before its onSuccess gets it */
-function changing(callbacks: any, change: (data: any) => any): { [name: string]: unknown } {
-    var wrapped: { [name: string]: unknown } = {};
+function copied(callbacks: any): { [name: string]: any } {
+    var out: { [name: string]: any } = {};
     for (var name in callbacks) {
-        wrapped[name] = callbacks[name];
+        out[name] = callbacks[name];
     }
+    return out;
+}
+
+/** hls.js's callbacks with the response's data changed before its onSuccess gets it */
+function changing(callbacks: any, change: (data: any) => any): { [name: string]: any } {
+    var wrapped = copied(callbacks);
     wrapped.onSuccess = function (response: any, stats: unknown, ctx: unknown, details: unknown) {
         response.data = change(response.data);
         callbacks.onSuccess(response, stats, ctx, details);
@@ -130,9 +149,81 @@ function serve(inner: any, context: any, text: string, callbacks: any): void {
 }
 
 /** A segment load: each segment's chunks made one fragment (cmaf.ts); on any doubt, or a throw, the segment as it
- * came */
+ * came. hls.js's progressive mode takes a segment's data from onProgress (this TV's loader calls it once, with all of
+ * it): a TS segment goes there in parts (inParts), anything else whole; loads without it (an init segment) get the
+ * data with onSuccess */
 function loadFragment(this: any, context: any, config: unknown, callbacks: any): void {
-    this.inner.load(context, config, changing(callbacks, merged));
+    var self = this;
+    var lists = this.lists as Playlists;
+    var onProgress = callbacks.onProgress;
+    var wrapped = onProgress ? copied(callbacks) : changing(callbacks, merged);
+    var ahead = lists.segment;
+    if (onProgress) {
+        // Offered for the first segment load only: a later load of its address gets fresh data and timings
+        lists.segment = null;
+        wrapped.onProgress = function (stats: unknown, ctx: unknown, data: any, details: unknown) {
+            var parts = inParts(merged(data));
+            for (var i = 0; i < parts.length; i++) {
+                onProgress(stats, ctx, parts[i], details);
+            }
+        };
+    }
+    if (ahead && onProgress && ahead.url === context.url) {
+        // hls.js times a load from its start (its abandon check reads it while the data still comes)
+        var stats = self.inner.stats;
+        stats.loading.start = performance.now();
+        var fetch = function (): void {
+            if (!self.aborted) {
+                stats.loading.start = 0;
+                self.inner.load(context, config, wrapped);
+            }
+        };
+        ahead.data.then(function (got: Loaded) {
+            if (self.aborted) {
+                return;
+            }
+            if (got.bytes) {
+                serveBytes(self.inner, context, got.bytes, got.took, wrapped);
+            } else {
+                fetch();
+            }
+        }, fetch);
+        return;
+    }
+    this.inner.load(context, config, wrapped);
+}
+
+/** Answers a segment load with data fetched ahead, as hls.js's own loader would: its download's length (took ms) as if
+ * it had just ended, so the line estimate is the real one (not the time since it was fetched) */
+function serveBytes(inner: any, context: any, bytes: ArrayBuffer, took: number, callbacks: any): void {
+    var stats = inner.stats;
+    var now = performance.now();
+    stats.loading.start = stats.loading.first = now - took;
+    stats.loading.end = now;
+    stats.loaded = stats.total = bytes.byteLength;
+    inner.context = context;
+    if (callbacks.onProgress) {
+        callbacks.onProgress(stats, context, bytes, null);
+    }
+    callbacks.onSuccess({ url: context.url, data: bytes, code: 200 }, stats, context, null);
+}
+
+/** A TS segment in parts of about PART_BYTES, cut between packets; anything else (fMP4) whole */
+export function inParts(data: any): any[] {
+    if (!(data instanceof ArrayBuffer) || data.byteLength <= PART_BYTES) {
+        return [data];
+    }
+    var bytes = new Uint8Array(data, 0, Math.min(data.byteLength, TS_PACKET + 1));
+    if (bytes[0] !== TS_SYNC || bytes[TS_PACKET] !== TS_SYNC) {
+        return [data];
+    }
+    var count = Math.ceil(data.byteLength / PART_BYTES);
+    var size = Math.ceil(data.byteLength / count / TS_PACKET) * TS_PACKET;
+    var out: ArrayBuffer[] = [];
+    for (var at = 0; at < data.byteLength; at += size) {
+        out.push(data.slice(at, Math.min(at + size, data.byteLength)));
+    }
+    return out;
 }
 
 function merged(data: any): any {
@@ -181,6 +272,7 @@ export class MseEngine implements Engine {
     private pausedOn = false;
     private loadStopped = false;
     private onPlaying: (() => void) | null = null;
+    private onLoadStart: (() => void) | null = null;
 
     constructor(private video: HTMLVideoElement) {
         var self = this;
@@ -197,7 +289,8 @@ export class MseEngine implements Engine {
         var self = this;
         // The session's media playlist is served once: a later start of this source (a retry) fetches a fresh one
         var level = source.level || null;
-        source.level = undefined;
+        var segment = source.segment || null;
+        source.level = source.segment = undefined;
         this.events = events;
         this.source = source;
         this.levelOf = [];
@@ -223,7 +316,16 @@ export class MseEngine implements Engine {
                     }
                     return;
                 }
-                self.open(Hls, source, pipe, level);
+                if (pipe && level && !fits(pipe, level.text)) {
+                    // The other format: hls.js would open a new source over it and start where the last video stood
+                    dropPipeline(pipe);
+                    pipe = null;
+                }
+                try {
+                    self.open(Hls, source, pipe, level, segment);
+                } catch (e) {
+                    self.fail({ kind: 'media', detail: 'hls.js did not start: ' + (e && (e as Error).message) });
+                }
             });
         }, function () {
             if (gen === self.gen) {
@@ -232,7 +334,8 @@ export class MseEngine implements Engine {
         });
     }
 
-    private open(Hls: HlsStatic, source: Source, pipe: Transfer | null, level: { url: string; text: string } | null): void {
+    private open(Hls: HlsStatic, source: Source, pipe: Transfer | null, level: { url: string; text: string } | null,
+        segment: SegmentAhead | null): void {
         var self = this;
         var video = this.video;
         var E = Hls.Events;
@@ -243,7 +346,7 @@ export class MseEngine implements Engine {
         video.loop = false;
         var hls = this.hls = new Hls({
             debug: debug,
-            workerPath: HLS_WORKER,
+            workerPath: workerPath(),
             autoStartLoad: false,
             abrEwmaDefaultEstimate: bandwidth() * SHARE,
             testBandwidth: false,
@@ -261,7 +364,10 @@ export class MseEngine implements Engine {
             pLoader: PlaylistLoader || (PlaylistLoader = wrapLoader(Hls, loadPlaylist)),
             fLoader: FragmentLoader || (FragmentLoader = wrapLoader(Hls, loadFragment))
         });
-        var lists: Playlists = { master: { url: source.url, text: source.master }, level: level, filter: source.filter || null };
+        // Segments to the converter as they come (loadFragment hands TS ones in parts); set after construction, as
+        // hls.js's own check for it looks for fetch streaming, which is not in this build
+        hls.config.progressive = true;
+        var lists: Playlists = { master: { url: source.url, text: source.master }, level: level, filter: source.filter || null, segment: segment };
         Object.defineProperty(hls.config, PLAYLISTS, { value: lists });
         hls.on(E.MANIFEST_PARSED, function () {
             if (self.hls === hls) {
@@ -281,11 +387,21 @@ export class MseEngine implements Engine {
                 self.events.quality(index);
             }
         });
+        // A taken pipeline goes to the start once an appended part holds it (the rest of the segment comes after), or
+        // hls.js moves it there itself
+        if (pipe) {
+            hls.on(E.BUFFER_APPENDED, function (event, data) {
+                if (self.hls === hls && !self.ready && data.parent === 'main' && (video.seeking || self.toStart(source, false))) {
+                    self.ready = true;
+                }
+            });
+        }
+        var fitted = false;
         hls.on(E.FRAG_BUFFERED, function (event, data) {
             if (self.hls === hls && data.frag && data.frag.type === 'main') {
-                var first = !self.ready;
                 self.buffered(hls, source);
-                if (first && pipe) {
+                if (pipe && !fitted) {
+                    fitted = true;
                     self.fitDuration(hls, pipe.mediaSource, end);
                 }
             }
@@ -296,18 +412,27 @@ export class MseEngine implements Engine {
             }
         });
         hls.on(E.STALL_RESOLVED, function () {
-            if (self.hls === hls && self.events) {
+            if (self.hls === hls && self.events && !video.seeking) {
                 self.events.playing();
             }
         });
-        // A taken pipeline's video may say 'playing' before it has anything new: only once the first segment is in
+        // The picture (the session shows the video then): a taken pipeline's video may say 'playing' before it has
+        // anything new, so only once the stream's start is in; and never while it seeks (to that start): the TV's video
+        // plane still shows the last video's last frame until the seek is done ('seeked' tells it then)
         this.onPlaying = function () {
-            if (self.ready && !video.paused && self.events) {
+            if (self.ready && !video.paused && !video.seeking && self.events) {
                 self.events.playing();
             }
         };
         video.addEventListener('playing', this.onPlaying);
         video.addEventListener('seeked', this.onPlaying);
+        // hls.js may put a new source in the video (a reset of its own), which leaves it paused
+        this.onLoadStart = function () {
+            if (!self.pausedOn) {
+                playVideo(video);
+            }
+        };
+        video.addEventListener('loadstart', this.onLoadStart);
         hls.attachMedia(pipe ? { media: video, mediaSource: pipe.mediaSource, tracks: pipe.tracks } : video);
         hls.loadSource(source.url);
     }
@@ -351,29 +476,35 @@ export class MseEngine implements Engine {
         this.measured = true;
         if (!this.ready) {
             this.ready = true;
-            this.toStart(source);
+            this.toStart(source, true);
         }
         if (this.pausedOn && !this.loadStopped) {
             this.stopWhenFull(hls);
         }
     }
 
-    /** On a taken pipeline, once the first segment is in: the video to where the new stream starts (the start of
-     * what is buffered; a past broadcast's start position when that is in it). hls.js seeks there itself when the
-     * video stands before it; otherwise this is the one seek, nudged when the video stands there already (only a
-     * seek makes the TV's player drop the old picture) */
-    private toStart(source: Source): void {
+    /** On a taken pipeline, once what is appended holds the new stream's start (whole: the first segment is in): the
+     * video to where the new stream starts (the start of what is buffered; a past broadcast's start position when that
+     * is in it). hls.js seeks there itself when the video stands before it; otherwise this is the one seek, nudged
+     * when the video stands there already (only a seek makes the TV's player drop the old picture). False when it
+     * did not move it: nothing buffered yet, or only parts before a past broadcast's start position */
+    private toStart(source: Source, whole: boolean): boolean {
         var video = this.video;
         var b = video.buffered;
         if (video.seeking || !b.length) {
-            return;
+            return false;
         }
         var at = source.startAt || 0;
-        var target = source.kind !== 'live' && at >= b.start(0) && at < b.end(0) ? at : b.start(0);
+        var vod = source.kind !== 'live';
+        if (vod && !whole && at >= b.end(0)) {
+            return false;
+        }
+        var target = vod && at >= b.start(0) && at < b.end(0) ? at : b.start(0);
         if (Math.abs(target - video.currentTime) < 0.05) {
             target += 0.05;
         }
         video.currentTime = target;
+        return true;
     }
 
     /** On a taken pipeline, once the video stands in the new stream (so that no seek moves it): the source's duration
@@ -507,6 +638,33 @@ export class MseEngine implements Engine {
         }
     }
 
+    /** A seek with SEEK_AHEAD_S buffered from it lands there; else where its segment begins (at most 10 s before): the
+     * TV shows a picture once it has about 5 s from the seek on, so a seek late in a segment not loaded yet waited for
+     * the next one too (5 s instead of 2) */
+    seekTarget(seconds: number): number {
+        var b = this.video.buffered;
+        for (var i = 0; i < b.length; i++) {
+            if (seconds >= b.start(i) && seconds + SEEK_AHEAD_S <= b.end(i)) {
+                return seconds;
+            }
+        }
+        var hls = this.hls;
+        var level = hls ? hls.levels[hls.currentLevel >= 0 ? hls.currentLevel : 0] : null;
+        var frags = level && level.details ? level.details.fragments : [];
+        var lo = 0;
+        var hi = frags.length - 1;
+        while (lo < hi) {
+            var mid = (lo + hi + 1) >> 1;
+            if (frags[mid].start <= seconds) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        var frag = frags[lo];
+        return frag && frag.start <= seconds && seconds < frag.start + frag.duration ? frag.start : seconds;
+    }
+
     current(): number {
         var hls = this.hls;
         var index = hls && hls.currentLevel >= 0 ? this.ourOf[hls.currentLevel] : -1;
@@ -527,6 +685,10 @@ export class MseEngine implements Engine {
             this.video.removeEventListener('playing', this.onPlaying);
             this.video.removeEventListener('seeked', this.onPlaying);
             this.onPlaying = null;
+        }
+        if (this.onLoadStart) {
+            this.video.removeEventListener('loadstart', this.onLoadStart);
+            this.onLoadStart = null;
         }
         this.events = null;
         var hls = this.hls;

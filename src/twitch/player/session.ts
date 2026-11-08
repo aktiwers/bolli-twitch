@@ -26,8 +26,10 @@ import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
 import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, UsherVersion } from '../api/playback.js';
 import { aheadOf, Engine, EngineEvents, Failure, FailureKind, playVideo, Quality, showVideo, Source } from './engine.js';
-import { mediaSourcePlays, parseQualities, pastBroadcast } from './master.js';
+import { mediaSourcePlays, parseQualities, pastBroadcast, segmentStart } from './master.js';
 import { hasAds, markAdGaps } from './ads.js';
+import { SegmentAhead, segmentAhead } from './segment.js';
+import { stabilize } from './stable-volume.js';
 import { bandwidth, fitQuality, pickUnder } from './bandwidth.js';
 import { loadHls } from './hls-loader.js';
 import { MseEngine } from './mse-engine.js';
@@ -109,6 +111,8 @@ var USHER_KEY = 'twitch.usher';
 var QUALITY_KEY = 'twitch.quality';
 /** A prefetched start is used this long */
 var AHEAD_MS = 60 * 1000;
+/** A live stream started ahead and not claimed stops after this: it would download for as long as focus rests */
+var READY_LIVE_MS = 20 * 1000;
 /** A live stream on the TV's own player has its playlist looked at for ads this often */
 var AD_CHECK_MS = 20 * 1000;
 /** Network and media failures tried again per failure episode */
@@ -125,6 +129,8 @@ interface Resolved {
     qualities: Quality[];
     /** A past broadcast's start quality's media playlist, fetched ahead with it (it does not change) */
     level?: { url: string; text: string };
+    /** And the segment it starts in, being fetched */
+    segment?: SegmentAhead;
 }
 
 /** An usher answer that is not a master: its status, and whether the token explains a refusal */
@@ -185,6 +191,8 @@ interface Playback {
     /** Its screen left it and no other claimed it: paused until a claim */
     left: boolean;
     held: boolean;
+    /** Started ahead for a resting tile (ready) and not claimed yet */
+    ahead: boolean;
     failed: FailureKind | '';
     adTimer: number;
     retryTimer: number;
@@ -234,6 +242,7 @@ function noop(): undefined {
 export function videoElement(): HTMLVideoElement {
     if (!video) {
         video = document.getElementById('video') as HTMLVideoElement;
+        stabilize(video);
         document.addEventListener('visibilitychange', visibilityChanged, false);
         video.addEventListener('waiting', function () {
             if (now && now.events.buffering) {
@@ -370,9 +379,9 @@ function sweepAhead(): void {
     }
 }
 
-/** r with its start quality's media playlist as a full-screen start picks it (the remembered one, else Auto's), or
- * r as it is when that fails */
-function withLevel(r: Resolved): Promise<Resolved> {
+/** r with its start quality's media playlist as a full-screen start picks it (the remembered one, else Auto's) and
+ * the segment holding at being fetched (at known: where its player starts it), or r as it is when that fails */
+function withLevel(r: Resolved, at: number | undefined): Promise<Resolved> {
     var list = r.qualities.filter(mediaSourcePlays);
     var pick = rememberedIndex(list);
     var first = list[pick >= 0 ? pick : fitQuality(list, bandwidth(), 0)];
@@ -381,6 +390,7 @@ function withLevel(r: Resolved): Promise<Resolved> {
     }
     return getText(first.url, 10000).then(function (text) {
         r.level = { url: first.url, text: text };
+        r.segment = at !== undefined ? segmentAhead(first.url, text, at) || undefined : undefined;
         return r;
     }, function () {
         return r;
@@ -405,13 +415,54 @@ export function prefetch(target: Target): Promise<unknown> {
     }
     var result = resolveStream(target, adFreeType, usher);
     if (target.kind === 'vod' && engineFor('vod') === 'mse') {
-        result = result.then(withLevel);
+        result = result.then(function (r) {
+            return withLevel(r, target.startAt);
+        });
     }
     var entry: Ahead = { at: Date.now(), type: adFreeType, usher: usher, result: result };
     ahead[k] = entry;
     return entry.result.then(noop, function () {
         if (ahead[k] === entry) {
             delete ahead[k];
+        }
+    });
+}
+
+/** Starts target out of sight for the player likely to open it next (focus resting on its tile): a past broadcast
+ * paused where it starts, a live stream muted (so it stays live). The player's play() of it hands it over: the TV's
+ * slow first picture (it works through the whole first segment, 1.7 s for 10 s at 60 fps) is done by then. Not while
+ * something plays for a screen, also one under another screen (a channel page's preview keeps its stream, a player
+ * under the channel page its avatar opened stays ready for Back); a live one not claimed in READY_LIVE_MS
+ * stops (a past broadcast stops loading once its buffer is full) */
+export function ready(target: Target): void {
+    var p = now;
+    if (target.kind === 'clip' || p && (!p.ahead || key(p.target) === key(target) && !p.failed)) {
+        return;
+    }
+    play(target, {}, { muted: true, remember: false });
+    var started = now as Playback;
+    started.ahead = true;
+    started.held = target.kind !== 'live';
+    if (target.kind === 'live') {
+        setTimeout(function () {
+            if (started === now && started.ahead) {
+                stop();
+            }
+        }, READY_LIVE_MS);
+    }
+}
+
+/** Focus left the tile a playback was started ahead for, or its screen hid: it stops unless a play() claims it in this
+ * navigation (OK opened its player) */
+export function unready(): void {
+    var p = now;
+    if (!p || !p.ahead) {
+        return;
+    }
+    var started = p;
+    Promise.resolve().then(function () {
+        if (started === now && started.ahead) {
+            stop();
         }
     });
 }
@@ -436,6 +487,7 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         if (!p.failed) {
             p.events = events;
             p.left = false;
+            p.ahead = false;
             applyOptions(p, opts);
             moveTo(p, startAt);
             unhold(p);
@@ -459,7 +511,7 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
         triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
         startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, wentOnAt: 0, paused: false, left: false, held: false,
-        failed: '', adTimer: 0, retryTimer: 0
+        ahead: false, failed: '', adTimer: 0, retryTimer: 0
     };
     applyOptions(p, opts);
     drawVideo();
@@ -593,6 +645,9 @@ function startStream(p: Playback): void {
                 return;
             }
             source.level = { url: first.url, text: text };
+            if (kept !== null && r.segment) {
+                source.segment = r.segment;
+            }
             // Ads in the last player type too: it plays (their segments left out) but is not remembered
             startEngine(p, source, r.token, !ads);
         }, function () {
@@ -665,6 +720,12 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
     p.source = source;
     source.maxHeight = p.options.maxHeight || 0;
     source.startAt = p.shown && p.target.kind !== 'live' ? p.at : p.target.startAt;
+    if (!p.shown && source.kind === 'vod' && source.startAt && source.level) {
+        // A past broadcast opens where the segment holding its start begins (at most 10 s before): the TV shows its
+        // first picture once it has worked through about 5 s of video from there, so a start late in a segment waits
+        // for all of it
+        source.startAt = segmentStart(source.level.text, source.startAt);
+    }
     if (token) {
         p.token = token;
         p.playingType = p.type;
@@ -971,7 +1032,7 @@ function visibilityChanged(): void {
                 p.events.background();
             }
             var at = p.shown && p.target.kind !== 'live' ? p.at : p.target.startAt;
-            var kept = !p.failed && !p.left ? { target: { kind: p.target.kind, id: p.target.id, startAt: at, files: p.files || undefined },
+            var kept = !p.failed && !p.left && !p.ahead ? { target: { kind: p.target.kind, id: p.target.id, startAt: at, files: p.files || undefined },
                 events: p.events, options: p.options, paused: p.paused } : null;
             release();
             parked = kept;
@@ -1063,7 +1124,8 @@ export function setQuality(index: number): void {
 export function seek(seconds: number): void {
     var p = now;
     if (p && p.target.kind !== 'live') {
-        p.at = Math.max(0, seconds);
+        var at = Math.max(0, seconds);
+        p.at = p.engine && p.engine.seekTarget ? p.engine.seekTarget(at) : at;
         videoElement().currentTime = p.at;
     }
 }

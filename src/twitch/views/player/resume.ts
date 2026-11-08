@@ -2,6 +2,7 @@
 // there. A video watched to its end (the last END_S) is forgotten, so it starts from the beginning next time.
 
 import { load, save } from '../../../core/store.js';
+import { Video } from '../../api/types.js';
 
 var STORE_KEY = 'twitch.resume';
 var KEPT = 100;
@@ -27,6 +28,11 @@ export function resumeAt(id: string): number {
         }
     }
     return 0;
+}
+
+/** Where a past broadcast opens: where the viewer stopped in it on this TV, else where Twitch says they stopped */
+export function startOf(v: Video): number {
+    return resumeAt(v.id) || v.position || 0;
 }
 
 /** Keeps where the viewer is (length 0: not known) */

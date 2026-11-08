@@ -1,20 +1,20 @@
 // Twitch's content gate (its Just one second... prompt): the channels whose gate the viewer passed in this run of
-// the app (Twitch asks once per channel), and Bolli's Mature Content Warning setting (on unless switched off in
-// Settings, as Twitch's TV app always asks): off, mature content plays at once. Twitch's age, region and account
-// restrictions (restricted) always show Twitch's gate, whatever the setting says.
+// the app (Twitch asks once per channel), and Bolli's Mature Content Warning setting (off unless switched on in
+// Settings: mature content plays at once; on, it asks first as Twitch's TV app does). Twitch's age, region and
+// account restrictions (restricted) always show Twitch's gate, whatever the setting says.
 
 import { load, save } from '../../../core/store.js';
 
-/** The stored setting: true when the warning is switched off */
+/** The stored setting: true when the warning is off, false when switched on */
 var SKIP_KEY = 'twitch.player.skipGate';
 /** The setting in memory, read from storage the first time */
 var skip: boolean | null = null;
 var accepted: { [login: string]: boolean } = {};
 
-/** Whether the warning is switched off */
+/** Whether the warning is off (unless switched on) */
 export function skipsGate(): boolean {
     if (skip === null) {
-        skip = load<boolean>(SKIP_KEY) === true;
+        skip = load<boolean>(SKIP_KEY) !== false;
     }
     return skip;
 }
