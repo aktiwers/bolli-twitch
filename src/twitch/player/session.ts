@@ -8,7 +8,7 @@
 // buffer). A worker that cannot start sends past broadcasts to the TV's own player for the rest of the run, while a
 // live stream fails as not playable here (on the TV's own player it freezes on its first picture). Every engine start
 // gets the current height limit and pause, and a past broadcast or clip that showed a picture starts where the viewer
-// was.
+// was. A past broadcast that still records plays to the end it had at its start, then is resolved again from there.
 // prefetch() resolves a likely next start ahead. A target that already plays is handed over (a preview going full
 // screen), not restarted. Ownership: the screen whose events play owns the playback; a screen going out of sight
 // leaves it (leave), and unless the screen shown next plays the same target (a claim), it pauses once that
@@ -26,7 +26,7 @@ import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
 import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, UsherVersion } from '../api/playback.js';
 import { aheadOf, Engine, EngineEvents, Failure, FailureKind, playVideo, Quality, showVideo, Source } from './engine.js';
-import { firstDateOnly, mediaSourcePlays, parseQualities } from './master.js';
+import { mediaSourcePlays, parseQualities, pastBroadcast } from './master.js';
 import { hasAds, markAdGaps } from './ads.js';
 import { bandwidth, fitQuality, pickUnder } from './bandwidth.js';
 import { loadHls } from './hls-loader.js';
@@ -176,6 +176,10 @@ interface Playback {
     shown: boolean;
     /** Where a past broadcast or clip stands (s), kept as it plays: a failed engine's video no longer tells */
     at: number;
+    /** The past broadcast still records: its playlist got an end (pastBroadcast), so it goes on at that end */
+    recording: boolean;
+    /** The end it last went on from (s; 0: none) */
+    wentOnAt: number;
     /** The viewer paused: every engine start holds it */
     paused: boolean;
     /** Its screen left it and no other claimed it: paused until a claim */
@@ -201,11 +205,13 @@ var makeEngine = function (name: EngineName, v: HTMLVideoElement): Engine {
 var now: Playback | null = null;
 var ahead: { [key: string]: Ahead } = {};
 /** For the rest of the app's run: the player type that last played without ads, the usher version that worked when
- * v1 did not, a Media Source worker that could not start, and the engine the test hook forced ('' none) */
+ * v1 did not, a Media Source worker that could not start, the engine the test hook forced ('' none) and whether it
+ * asks stream tokens with the account */
 var adFreeType = 0;
 var usherForRun: UsherVersion | null = null;
 var workerBroken = false;
 var forced: EngineName | '' = '';
+var accountForced = false;
 /** What played when the app went to the background, to start again on return */
 var parked: { target: Target; events: SessionEvents; options: PlayOptions; paused: boolean } | null = null;
 
@@ -235,6 +241,9 @@ export function videoElement(): HTMLVideoElement {
             }
         });
         video.addEventListener('ended', function () {
+            if (now && now.recording && goOn(now)) {
+                return;
+            }
             if (now && now.events.ended) {
                 now.events.ended();
             }
@@ -282,6 +291,12 @@ export function engineFor(kind: 'live' | 'vod' | 'clip'): EngineName {
  * never stored */
 export function forceEngine(name: EngineName | ''): void {
     forced = name;
+}
+
+/** Stream tokens asked with the account from the next start on in this run (signed in), as Twitch then puts ads in
+ * the ad-free player types: the test hook's, to see ad breaks; never stored */
+export function forceAccount(on: boolean): void {
+    accountForced = on;
 }
 
 /** The stored stream request version ('' for the default: v1, v2 once v1 fails; v1 or v2: that one only) */
@@ -442,9 +457,9 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         target: { kind: target.kind, id: target.id, startAt: startAt },
         files: target.files && target.files.length ? target.files : null, events: events, options: opts,
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
-        triedV2: false, triedGuest: false, withAccount: false, resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
-        startedAt: Date.now(), shown: false, at: startAt || 0, paused: false, left: false, held: false, failed: '', adTimer: 0,
-        retryTimer: 0
+        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
+        startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, wentOnAt: 0, paused: false, left: false, held: false,
+        failed: '', adTimer: 0, retryTimer: 0
     };
     applyOptions(p, opts);
     drawVideo();
@@ -507,6 +522,19 @@ function restart(p: Playback): void {
     } else {
         startStream(p);
     }
+}
+
+/** A past broadcast still recording at the end its playlist had: resolved again to go on with what was recorded
+ * since; false when the last time added nothing (the viewer is where the recording stands) */
+function goOn(p: Playback): boolean {
+    var end = videoElement().duration;
+    if (!(end > p.wentOnAt + 1)) {
+        return false;
+    }
+    p.wentOnAt = end;
+    p.at = end;
+    restart(p);
+    return true;
 }
 
 function startClip(p: Playback): void {
@@ -611,6 +639,15 @@ function adFilter(p: Playback): (text: string) => string {
     };
 }
 
+/** A past broadcast's media playlists on the Media Source engine: one date tag, and an end while it records */
+function vodFilter(p: Playback): (text: string) => string {
+    return function (text: string): string {
+        var r = pastBroadcast(text);
+        p.recording = r.recording;
+        return r.text;
+    };
+}
+
 /** Starts p's engine on source. token: a new one for it, which was asked as p's player type; adFree: that start was
  * seen without ads (only then is its player type remembered for the run). The options may have changed since source
  * was made (a hand-over), and a past broadcast or clip that showed a picture starts where the viewer was. */
@@ -641,7 +678,7 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
     if (source.kind === 'live' && p.engineName === 'mse') {
         source.filter = adFilter(p);
     } else if (source.kind === 'vod' && p.engineName === 'mse') {
-        source.filter = firstDateOnly;
+        source.filter = vodFilter(p);
     }
     var run = ++p.run;
     clearTimeout(p.adTimer);

@@ -7,6 +7,7 @@
 //   engine('native' | 'mse' | '')                the engine live streams and past broadcasts start on in this run
 //                                                ('' the policy's; never stored); returns what each kind starts on
 //   usher('v1' | 'v2' | '')                      the usher version to start with ('' the default)
+//   account(on)                                  stream tokens asked with the account (signed in) in this run: ads
 //   quality(index), seek(s), pause(), resume(), debug(on) (hls.js's warnings on the console)
 //   state()                                      the session's state, first picture, stalls, seeks, pipelines, events
 // It prints no token, signature or stream address.
@@ -126,6 +127,9 @@ var api = {
     },
     usher: function (version: UsherVersion | ''): void {
         session.setUsher(version);
+    },
+    account: function (on: boolean): void {
+        session.forceAccount(on);
     },
     quality: function (index: number): void {
         session.setQuality(index);

@@ -66,6 +66,19 @@ export function firstDateOnly(text: string): string {
     return next <= 0 ? text : text.slice(0, next) + text.slice(next).replace(/#EXT-X-PROGRAM-DATE-TIME:[^\n]*\n/g, '');
 }
 
+var END_TAG = '#EXT-X-ENDLIST';
+
+/** A past broadcast's media playlist for hls.js: its first date tag only, and an end when it has none (the broadcast
+ * still records). Without one hls.js takes it for live and parses all of it again every target duration, which
+ * stops the TV for seconds each time in a long broadcast (14,633 segments in 40 h). recording: the end was added */
+export function pastBroadcast(text: string): { text: string; recording: boolean } {
+    var out = firstDateOnly(text);
+    if (out.indexOf(END_TAG) >= 0) {
+        return { text: out, recording: false };
+    }
+    return { text: (out.charAt(out.length - 1) === '\n' ? out : out + '\n') + END_TAG + '\n', recording: true };
+}
+
 /** Video codecs by their sample entry (the codecs list's other entries are audio) */
 var VIDEO_CODEC = /^(avc[1-4]|hvc1|hev1|dvh1|dvhe|dva1|dvav|av01|vp08|vp09)\b/;
 
