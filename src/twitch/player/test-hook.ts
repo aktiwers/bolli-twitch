@@ -9,6 +9,8 @@
 //   usher('v1' | 'v2' | '')                      the usher version to start with ('' the default)
 //   account(on)                                  stream tokens asked with the account (signed in) in this run: stitched
 //   levels(ms)                                   Stable Volume's input and output level over ms (dB RMS and peak; Android)
+//   fakeBreak(on)                                live playlists taken as having a commercial break (the swap runs)
+//   breakScreen(on)                              the screen told every player type has a commercial break, or not
 //   quality(index), seek(s), pause(), resume(), debug(on) (hls.js's warnings on the console)
 //   state()                                      the session's state, first picture, stalls, seeks, pipelines, live
 //                                                delay, events
@@ -178,6 +180,12 @@ var api = {
     },
     debug: function (on: boolean): void {
         setHlsDebug(on);
+    },
+    fakeBreak: function (on: boolean): void {
+        session.forceBreak(on);
+    },
+    breakScreen: function (on: boolean): void {
+        session.showBreak(on);
     },
     seek: function (seconds: number): void {
         session.seek(seconds);

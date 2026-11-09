@@ -18,6 +18,8 @@ var SVG: { [name: string]: string } = {
     pencil: '<svg viewBox="0 0 40 40"><path d="M1 24.5V39h14.5l2.6-2.6H3.6V27.1z" fill="#9147ff"/>' +
         '<path d="M5.6 26.6L26.4 5.8a3.4 3.4 0 0 1 4.8 0l3 3a3.4 3.4 0 0 1 0 4.8L13.4 34.4H5.6z M22.3 9.9l7.8 7.8"' + STROKE + ' stroke-width="3.2"/>' +
         '<path d="M8.3 29.1l6.3-6.3 2.6 2.6-6.3 6.3z" fill="#9147ff"/></svg>',
+    chatset: '<svg viewBox="0 0 40 40"><path d="M6 5h28a3 3 0 0 1 3 3v19a3 3 0 0 1-3 3H19l-9 7v-7H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z" fill="#9147ff"/>' +
+        '<path d="M10 14h20M10 21h13" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>',
     sparkle: '<svg viewBox="0 0 40 40"><path d="' + STAR + '" transform="translate(-3.5 3.5)" fill="#9147ff"/>' +
         '<path d="' + STAR + '"' + STROKE + ' stroke-width="3"/>' +
         '<path d="M33 2.5c.5 2.3 1.6 3.4 3.9 3.9-2.3.5-3.4 1.6-3.9 3.9-.5-2.3-1.6-3.4-3.9-3.9 2.3-.5 3.4-1.6 3.9-3.9z" fill="currentColor"/></svg>'

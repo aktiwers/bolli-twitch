@@ -7,7 +7,7 @@ import { Item } from '../../api/types.js';
 import { video } from '../../api/video.js';
 import { ChatConnection } from '../../chat/connection.js';
 import { loadEmotes } from '../../chat/emotes.js';
-import { ChatPanel } from '../../chat/panel.js';
+import { ChatPanel, PanelLayout } from '../../chat/panel.js';
 import { duration, keyOf, leave, owns, pause, pictureRuns, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
 import { Navigator, Screen } from '../navigator.js';
 import { gatePassed } from './gate.js';
@@ -23,16 +23,23 @@ var session: PlayerSession = {
     }
 };
 
+/** A long visit asks the emote services again this often (only those whose time has come: chat/emotes.ts) */
+var EMOTE_CHECK_MS = 30 * 60 * 1000;
+
 /** One chat connection and panel per live player */
 function chatSide(parent: HTMLElement): ChatSide {
     var panel = new ChatPanel(parent);
     var connection = new ChatConnection();
     var joined = '';
+    var emoteTimer = 0;
     return {
         el: panel.el,
         join: panel.join,
         show: function (on: boolean): void {
             panel.show(on);
+        },
+        place: function (layout: PanelLayout): void {
+            panel.place(layout);
         },
         open: function (login: string): void {
             joined = login.toLowerCase();
@@ -40,8 +47,13 @@ function chatSide(parent: HTMLElement): ChatSide {
         },
         emotes: function (channelId: string): void {
             loadEmotes(joined, channelId);
+            clearInterval(emoteTimer);
+            emoteTimer = setInterval(function () {
+                loadEmotes(joined, channelId);
+            }, EMOTE_CHECK_MS) as unknown as number;
         },
         close: function (): void {
+            clearInterval(emoteTimer);
             connection.close();
         }
     };

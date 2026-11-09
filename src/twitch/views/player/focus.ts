@@ -21,6 +21,11 @@ export class FocusGraph {
         this.remember(start);
     }
 
+    /** The moves from now on (the buttons placed another way) */
+    setLinks(links: Links): void {
+        this.links = links;
+    }
+
     /** An arrow: true when focus moved */
     move(dir: Direction): boolean {
         var to = this.target(dir);

@@ -1,10 +1,10 @@
 // Settings as Twitch's TV app has it: five cards (Your Profile, Need Help?, Terms of Service, Privacy Policy,
 // Cookies and Advertising Choices), the first opening Your Profile, the others their QR pages. Under them Bolli's
-// own group in the same cards: chat's gift and raid notices, third-party emotes and layout, the start dim, the mature
-// content warning, Stable Volume (Android), the channel points' bonus, the stream request version, the remembered
-// quality, and the version. OK changes a setting to its next choice (Left/Right step back and forth); it is saved at
-// once and holds from the next start of a stream. The QR library loads when Settings first shows,
-// ready for the QR pages.
+// own group in the same cards: chat's gift and raid notices, third-party emotes, live chat (its settings page, over
+// an example), the start dim, the mature content warning, Stable Volume (Android), the channel points' bonus, the
+// stream request version, the remembered quality, and the version. OK changes a setting to its next choice
+// (Left/Right step back and forth); it is saved at once and holds from the next start of a stream. The QR library
+// loads when Settings first shows, ready for the QR pages.
 
 import { h, setShown } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
@@ -13,7 +13,7 @@ import { setThirdPartyEmotes, thirdPartyEmotes } from '../../chat/emotes.js';
 import { extraNotices, setExtraNotices } from '../../chat/parse.js';
 import { rememberedQuality, rememberQuality, setUsher, usherPref } from '../../player/session.js';
 import { MenuMode, Navigator, Screen } from '../navigator.js';
-import { chatOver, setChatOver } from '../player/chat-choice.js';
+import { ChatSettings, chatSummary } from '../player/chat-settings.js';
 import { setStartDim, startDim } from '../player/start-dim.js';
 import { setSkipsGate, skipsGate } from '../player/gate.js';
 import { canStabilize, setStableVolume, stableVolume } from '../../player/stable-volume.js';
@@ -34,6 +34,8 @@ interface Setting {
     /** The value as the card shows it, and the line under the title */
     label(value: string): string;
     line(value: string): string;
+    /** OK opens a page (no values to step through) */
+    page?: boolean;
 }
 
 var TWITCH: (Card & { id: string })[] = [
@@ -76,17 +78,16 @@ var EMOTES = onOffCard('emotes', 'Third-Party Emotes', thirdPartyEmotes, setThir
     'Chat shows 7TV, BetterTTV and FrankerFaceZ emotes too, which Twitch\'s TV app leaves out.',
     'Chat shows Twitch\'s own emotes only, as Twitch\'s TV app does.');
 
-var LAYOUT: Setting = {
+/** The live chat settings page (chat-settings.ts): its values in the card's line, OK opens it over Settings */
+var CHAT: Setting = {
     icon: 'layout',
-    title: 'Chat Layout',
-    values: ['beside', 'over'],
-    now: function () { return chatOver() ? 'over' : 'beside'; },
-    set: function (v) { setChatOver(v === 'over'); },
-    label: function (v) { return v === 'over' ? 'Over Video' : 'Beside'; },
-    line: function (v) {
-        return v === 'over' ? 'The video stays full screen, with chat over its right side.' :
-            'Chat sits beside the video, as in Twitch\'s TV app.';
-    }
+    title: 'Live Chat',
+    values: [],
+    now: function () { return ''; },
+    set: function () { return undefined; },
+    label: function () { return ''; },
+    line: function () { return chatSummary() + '. OK changes it, with an example behind it.'; },
+    page: true
 };
 
 var DIM = onOffCard('dim', 'Start Dim', startDim, setStartDim,
@@ -125,7 +126,7 @@ var USHER: Setting = {
 };
 
 /** Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there) */
-var SETTINGS = [NOTICES, EMOTES, LAYOUT, DIM, GATE, STABLE, POINTS, USHER].filter(function (s) { return s !== STABLE || canStabilize(); });
+var SETTINGS = [NOTICES, EMOTES, CHAT, DIM, GATE, STABLE, POINTS, USHER].filter(function (s) { return s !== STABLE || canStabilize(); });
 
 /** The remembered quality as Twitch names it (1080p60, 720p), or '' for none */
 function remembered(): string {
@@ -142,6 +143,8 @@ export class SettingsView implements Screen {
     private cards: CardList;
     /** The first Bolli card */
     private bolli: number;
+    /** The live chat settings page, once opened */
+    private chatPage: ChatSettings | null = null;
 
     constructor(private nav: Navigator) {
         this.el = h('div', 'bt-settings');
@@ -169,11 +172,14 @@ export class SettingsView implements Screen {
     }
 
     hide(): void {
+        if (this.chatPage) {
+            this.chatPage.close();
+        }
         setShown(this.el, false);
     }
 
     atTop(): boolean {
-        return this.cards.index === 0;
+        return this.cards.index === 0 && !(this.chatPage && this.chatPage.shown);
     }
 
     setFocused(focused: boolean): void {
@@ -181,12 +187,26 @@ export class SettingsView implements Screen {
     }
 
     onKey(code: number): boolean {
+        if (this.chatPage && this.chatPage.shown) {
+            this.chatPage.onKey(code);
+            if (!this.chatPage.shown) {
+                this.label();
+            }
+            return true;
+        }
         var i = this.cards.index;
         if (code === KEY.UP || code === KEY.DOWN) {
             // Up from the first card is the shell's (the menu)
             return this.cards.move(code === KEY.UP ? -1 : 1) || code === KEY.DOWN;
         }
         var setting = SETTINGS[i - this.bolli];
+        if (setting && setting.page) {
+            if (code === KEY.OK) {
+                this.chatPage = this.chatPage || new ChatSettings(this.el);
+                this.chatPage.open();
+            }
+            return code === KEY.OK || code === KEY.LEFT || code === KEY.RIGHT;
+        }
         if (code === KEY.LEFT || code === KEY.RIGHT) {
             if (setting) {
                 this.step(setting, code === KEY.LEFT ? -1 : 1);

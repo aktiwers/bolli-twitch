@@ -53,6 +53,7 @@ import { ErrorKind, Navigator, Screen } from './views/navigator.js';
 import { initOffline } from './views/offline.js';
 import { openPlayer, playAhead, prefetchClip } from './views/player/open.js';
 import { startOf } from './views/player/resume.js';
+import { setRestMs } from './views/rest.js';
 import './player/test-hook.js';
 
 // The version (written in by tools/build_app.mjs), on the page for checks
@@ -367,6 +368,10 @@ onAccountChange(function (on: boolean) {
  * a channel's stream by its login, an offline one too to see the player's prompts; 'vod' a past broadcast; 'clip' a
  * slug; 'channel' a channel's page by its login; 'game' a category's page by its name). No such item: Twitch's
  * not-found page */
+/** window.__bolli.restMs(ms): the wait on a tile before its stream starts ahead, for this run (checks over remote
+ * DevTools; 0 the default) */
+hook('restMs', setRestMs);
+
 hook('open', function (kind: string, id: string): Promise<boolean> {
     var item: Promise<Item>;
     if (kind === 'vod') {

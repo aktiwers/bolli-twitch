@@ -29,10 +29,13 @@ var MAX_RATIO = 4;
 var SEVEN_TV = 'https://7tv.io/v4/gql';
 var BTTV = 'https://api.betterttv.net/3/cached/';
 var FFZ = 'https://api.frankerfacez.com/v1/';
-var SEVEN_TV_ITEMS = 'emotes(perPage: 3000) { items { alias flags { zeroWidth } emote { id flags { animated } aspectRatio } } }';
-var SEVEN_TV_USER = 'query($id: String!) { users { userByConnection(platform: TWITCH, platformId: $id) { style { activeEmoteSet { ' +
-    SEVEN_TV_ITEMS + ' } } } } }';
-var SEVEN_TV_GLOBAL = '{ emoteSets { global { ' + SEVEN_TV_ITEMS + ' } } }';
+var SEVEN_TV_ITEMS = 'emotes(perPage: 3000, page: $page) { pageCount items { alias flags { zeroWidth } emote { id flags { animated } ' +
+    'aspectRatio } } }';
+var SEVEN_TV_USER = 'query($id: String!, $page: Int) { users { userByConnection(platform: TWITCH, platformId: $id) { style { ' +
+    'activeEmoteSet { ' + SEVEN_TV_ITEMS + ' } } } } }';
+var SEVEN_TV_GLOBAL = 'query($page: Int) { emoteSets { global { ' + SEVEN_TV_ITEMS + ' } } }';
+/** A 7TV set's pages read at most (a page holds 3000; sets hold up to their capacity, 1000 for most) */
+var SEVEN_TV_PAGES = 4;
 
 /** A picture's address by its kind (the letter an emote is kept with): 7TV's (s, S animated) and BetterTTV's (b, B
  * animated) at 2x as WebP, an animated one's still picture; FrankerFaceZ's (f at 2x, g at 1x where it has no 2x) */
@@ -259,7 +262,35 @@ interface SevenTvItem {
 }
 
 interface SevenTvSet {
-    emotes?: { items?: SevenTvItem[] } | null;
+    emotes?: { pageCount?: number; items?: SevenTvItem[] } | null;
+}
+
+/** A 7TV set's emotes over its pages (at most SEVEN_TV_PAGES): ask(page) gives the reply's set (null: none, so no
+ * emotes; undefined: no answer). A page that does not answer makes the whole no answer */
+function sevenTvAnswer(ask: (page: number) => Promise<SevenTvSet | null | undefined>): Promise<Answer> {
+    return ask(1).then(function (first) {
+        var pages = Math.min(first && first.emotes && first.emotes.pageCount || 1, SEVEN_TV_PAGES);
+        if (first === undefined || pages <= 1) {
+            return first === undefined ? null : sevenTv(first);
+        }
+        var rest: Promise<SevenTvSet | null | undefined>[] = [];
+        for (var page = 2; page <= pages; page++) {
+            rest.push(ask(page));
+        }
+        return Promise.all(rest).then(function (more) {
+            var items = (first && first.emotes && first.emotes.items || []).slice();
+            for (var i = 0; i < more.length; i++) {
+                var set = more[i];
+                if (set === undefined) {
+                    return null;
+                }
+                items = items.concat(set && set.emotes && set.emotes.items || []);
+            }
+            return sevenTv({ emotes: { items: items } });
+        });
+    }).then(null, function () {
+        return null;
+    });
 }
 
 /** A 7TV reply: a GraphQL error or a reply without data is no answer */
@@ -378,8 +409,8 @@ function gathered(requests: (Promise<Answer> | null)[], previous: List | null, l
 }
 
 /** Asks 7TV's GraphQL (as plain text: a request the browser sends without asking first) */
-function askSevenTv(query: string, variables?: object): Promise<unknown> {
-    return postJson(SEVEN_TV, variables ? { query: query, variables: variables } : { query: query }, { 'Content-Type': 'text/plain' });
+function askSevenTv(query: string, variables: object): Promise<unknown> {
+    return postJson(SEVEN_TV, { query: query, variables: variables }, { 'Content-Type': 'text/plain' });
 }
 
 function askGlobal(): Promise<void> {
@@ -388,11 +419,13 @@ function askGlobal(): Promise<void> {
         var previous = globalList();
         var due = dueOf(previous);
         askingGlobal = gathered([
-            due[0] ? asked(askSevenTv(SEVEN_TV_GLOBAL), function (reply) {
-                var data = sevenTvData(reply) as { emoteSets?: { global?: SevenTvSet | null } } | null;
-                var sets = data && data.emoteSets;
-                return sets ? sevenTv(sets.global) : null;
-            }, false) : null,
+            due[0] ? sevenTvAnswer(function (page) {
+                return askSevenTv(SEVEN_TV_GLOBAL, { page: page }).then(function (reply) {
+                    var data = sevenTvData(reply) as { emoteSets?: { global?: SevenTvSet | null } } | null;
+                    var sets = data && data.emoteSets;
+                    return sets ? sets.global || null : undefined;
+                });
+            }) : null,
             due[1] ? asked(getJson(BTTV + 'emotes/global'), function (reply) {
                 return reply instanceof Array ? bttv(reply as BttvEmote[]) : null;
             }, false) : null,
@@ -429,12 +462,14 @@ function askChannel(login: string, id: string, opened: number): Promise<void> {
             var previous = login === current ? currentList : storedList(login);
             var due = dueOf(previous);
             return gathered([
-                due[0] ? asked(askSevenTv(SEVEN_TV_USER, { id: known }), function (reply) {
-                    var data = sevenTvData(reply) as { users?: { userByConnection?: { style?: { activeEmoteSet?: SevenTvSet | null } } | null } } | null;
-                    var users = data && data.users;
-                    var user = users && users.userByConnection;
-                    return users ? sevenTv(user && user.style && user.style.activeEmoteSet) : null;
-                }, false) : null,
+                due[0] ? sevenTvAnswer(function (page) {
+                    return askSevenTv(SEVEN_TV_USER, { id: known, page: page }).then(function (reply) {
+                        var data = sevenTvData(reply) as { users?: { userByConnection?: { style?: { activeEmoteSet?: SevenTvSet | null } } | null } } | null;
+                        var users = data && data.users;
+                        var user = users && users.userByConnection;
+                        return users ? user && user.style && user.style.activeEmoteSet || null : undefined;
+                    });
+                }) : null,
                 due[1] ? asked(getJson(BTTV + 'users/twitch/' + known), function (reply) {
                     var r = reply as { channelEmotes?: BttvEmote[]; sharedEmotes?: BttvEmote[] } | null;
                     return isObject(r) ? bttv((r!.channelEmotes || []).concat(r!.sharedEmotes || [])) : null;

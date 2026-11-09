@@ -44,9 +44,99 @@
 .bt-chat-join-label { padding-right: 12px; font-size: 16.8px; font-weight: 600; line-height: 25.2px; white-space: nowrap; }
 .bt-chat-join.bt-focused { background: #fff; color: #1f1f23; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; }
 
-/* Chat over the video (a Bolli setting): the panel see-through over the picture's right side, the rows' list clear
-   (the panel darkens once), no fade at the top edge, notices on a see-through band */
-.bt-pl--chatover .bt-chat { background: rgba(14, 14, 16, .6); }
-.bt-pl--chatover .bt-chat-list { background: transparent; }
-.bt-pl--chatover .bt-chat-fade { display: none; }
-.bt-pl--chatover .bt-chat-row--notice { background: rgba(38, 38, 44, .7); }
+/* Chat over the video (Bolli's live chat settings): panel.ts places it; the rows' list clear, no fade at the top
+   edge. Its size scales text, badges and emotes (panel.ts gets the emote height; chat-choice.ts the width), also
+   beside the video; its background: one see-through panel, a bubble per message, or the text alone with a shadow;
+   old messages fade */
+.bt-chatover .bt-chat { background: transparent; }
+.bt-chatover .bt-chat-list { background: transparent; }
+.bt-chat-bg-panel .bt-chat { background: rgba(14, 14, 16, .6); }
+.bt-chat-bg-panel .bt-chat-row--notice { background: rgba(38, 38, 44, .7); }
+.bt-chat-bg-bubbles .bt-chat-row { display: table; margin-bottom: 4px; border-radius: 10px; background: rgba(14, 14, 16, .75); }
+.bt-chat-bg-bubbles .bt-chat-row--notice { background: rgba(38, 38, 44, .85); }
+.bt-chat-bg-none .bt-chat-row { text-shadow: 0 0 3px #000, 0 1px 2px #000; }
+.bt-chat-size-tiny .bt-chat-row { font-size: 10.92px; padding: 4.2px 8.4px 4.2px 4.2px; }
+.bt-chat-size-tiny .bt-chat-badge { width: 12.6px; height: 12.6px; }
+.bt-chat-size-tiny .bt-chat-emote { width: 20.16px; height: 20.16px; }
+.bt-chat-size-small .bt-chat-row { font-size: 13.26px; padding: 5.1px 10.2px 5.1px 5.1px; }
+.bt-chat-size-small .bt-chat-badge { width: 15.3px; height: 15.3px; }
+.bt-chat-size-small .bt-chat-emote { width: 24.48px; height: 24.48px; }
+.bt-chat-size-large .bt-chat-row { font-size: 18.72px; padding: 7.2px 14.4px 7.2px 7.2px; }
+.bt-chat-size-large .bt-chat-badge { width: 21.6px; height: 21.6px; }
+.bt-chat-size-large .bt-chat-emote { width: 34.56px; height: 34.56px; }
+/* A row (new, or reused and added again) fades out once it has shown that long */
+@-webkit-keyframes bt-chat-gone { to { opacity: 0; } }
+.bt-chat-fade-15 .bt-chat-row { -webkit-animation: bt-chat-gone .6s ease 15s forwards; }
+.bt-chat-fade-30 .bt-chat-row { -webkit-animation: bt-chat-gone .6s ease 30s forwards; }
+.bt-chat-fade-60 .bt-chat-row { -webkit-animation: bt-chat-gone .6s ease 60s forwards; }
+
+/* The message's time and its sender's picture, when the settings show them (panel.ts shows the picture's place, the
+   picture in it once known); the picture as large as the row's text makes it */
+.bt-chat-time { display: none; margin-right: 6px; font-size: .85em; color: #adadb8; }
+.bt-chat-times .bt-chat-time { display: inline; }
+.bt-chat-time:empty { display: none; }
+.bt-chat-bg-none .bt-chat-time { color: #dedee3; }
+.bt-chat-avatar { display: inline-block; width: 1.41em; height: 1.41em; margin-right: 6px; border-radius: 50%; vertical-align: middle; }
+
+/* Along a strip (live chat settings): beside the video on Twitch's panel colour, over it as its background says. Each
+   message on one line, a notice's words before the sender's: a band of rows, a ticker running across it (panel.ts
+   moves it), or one message at a time, each in its middle (a strut as tall as the strip beside it) */
+.bt-chat--band .bt-chat-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-chat--band .bt-chat-row .bt-chat-system, .bt-chat--band .bt-chat-row .bt-chat-line,
+.bt-chat-ticker .bt-chat-row .bt-chat-system, .bt-chat-ticker .bt-chat-row .bt-chat-line,
+.bt-chat-one .bt-chat-row .bt-chat-system, .bt-chat-one .bt-chat-row .bt-chat-line { display: inline; }
+.bt-chat--band .bt-chat-row--notice .bt-chat-system, .bt-chat-ticker .bt-chat-row--notice .bt-chat-system,
+.bt-chat-one .bt-chat-row--notice .bt-chat-system { margin-right: 8px; }
+.bt-chat-ticker, .bt-chat-one { display: none; position: absolute; top: 0; bottom: 0; white-space: nowrap; }
+.bt-chat--ticker .bt-chat-rows, .bt-chat--one .bt-chat-rows { display: none; }
+.bt-chat--ticker .bt-chat-ticker, .bt-chat--one .bt-chat-one { display: block; }
+.bt-chat-ticker { left: 0; }
+.bt-chat-one { left: 12px; right: 12px; overflow: hidden; }
+.bt-chat-ticker:before, .bt-chat-one:before { content: ''; display: inline-block; height: 100%; vertical-align: middle; }
+.bt-chat-ticker .bt-chat-row, .bt-chat-one .bt-chat-row { display: inline-block; margin-bottom: 0; vertical-align: middle; white-space: nowrap;
+                                                         -webkit-animation: none; }
+/* One at a time: each comes in from below, and fades out as old messages do */
+@-webkit-keyframes bt-chat-in { from { opacity: 0; -webkit-transform: translate3d(0, 12px, 0); } to { opacity: 1; -webkit-transform: none; } }
+.bt-chat-one .bt-chat-row { max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; -webkit-animation: bt-chat-in .3s ease both; }
+.bt-chat-fade-15 .bt-chat-one .bt-chat-row { -webkit-animation: bt-chat-in .3s ease both, bt-chat-gone .6s ease 15s forwards; }
+.bt-chat-fade-30 .bt-chat-one .bt-chat-row { -webkit-animation: bt-chat-in .3s ease both, bt-chat-gone .6s ease 30s forwards; }
+.bt-chat-fade-60 .bt-chat-one .bt-chat-row { -webkit-animation: bt-chat-in .3s ease both, bt-chat-gone .6s ease 60s forwards; }
+
+/* Live chat settings (views/player/chat-settings.ts): see-through, on the side away from the
+   chat (below a strip at the top), over everything (also Settings' top menu); over Settings an example: a picture
+   (chat-settings.ts places it as the video would be) behind it */
+.bt-chatset { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; z-index: 50; }
+.bt-chatset-scene { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; background: #000; }
+.bt-chatset-picture { position: absolute; left: 0; top: 0; width: 1280px; height: 720px;
+                      background: radial-gradient(ellipse 45% 30% at 30% 35%, rgba(145, 71, 255, .55), rgba(145, 71, 255, 0) 70%),
+                                  radial-gradient(ellipse 35% 22% at 75% 25%, rgba(0, 200, 255, .3), rgba(0, 200, 255, 0) 70%),
+                                  linear-gradient(#0b0716 0%, #1c1036 55%, #3a1f6b 70%, #d9cff0 71%, #f4f1fa 100%); }
+.bt-chatset-note { position: absolute; left: 0; right: 0; top: 24px; text-align: center; font-size: 16.8px; color: rgba(255, 255, 255, .75); }
+.bt-chatset-panel { position: absolute; left: 40px; top: 60px; width: 440px; padding: 16px 0 12px; border-radius: 12px;
+                    background: rgba(24, 24, 27, .82); color: #efeff1; }
+.bt-chatset--right .bt-chatset-panel { left: auto; right: 40px; }
+.bt-chatset--low .bt-chatset-panel { top: auto; bottom: 40px; }
+.bt-chatset--arranging .bt-chatset-panel { display: none; }
+.bt-chatset-title { padding: 0 20px 10px; font-size: 21.6px; font-weight: 700; }
+.bt-chatset-row { position: relative; height: 40px; padding: 0 20px; font-size: 16.8px; font-weight: 600; line-height: 40px; }
+.bt-chatset-row--hidden { display: none; }
+.bt-chatset-value { position: absolute; top: 0; right: 12px; font-weight: 400; color: #dedee3; }
+.bt-chatset-arrow { display: inline-block; width: 22px; text-align: center; font-size: 22px; opacity: 0; }
+.bt-chatset-row--focused { background: #efeff1; color: #0e0e10; }
+.bt-chatset-row--focused .bt-chatset-value { color: #0e0e10; }
+.bt-chatset-row--focused .bt-chatset-arrow { opacity: 1; }
+.bt-chatset-row--focused .bt-chatset-arrow--end { opacity: .25; }
+.bt-chatset-row--focused.bt-chatset-row--action .bt-chatset-arrow { opacity: 0; }
+/* Move and resize as Custom is chosen: a purple glint sweeping across it twice */
+.bt-chatset-row--shine { overflow: hidden; }
+.bt-chatset-row--shine::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 45%;
+                                background: linear-gradient(90deg, rgba(145, 71, 255, 0), rgba(145, 71, 255, .55) 50%, rgba(145, 71, 255, 0));
+                                -webkit-animation: bt-chatset-shine 1.1s ease-in-out 2; }
+@-webkit-keyframes bt-chatset-shine { from { -webkit-transform: translate3d(-110%, 0, 0); } to { -webkit-transform: translate3d(230%, 0, 0); } }
+.bt-chatset-keys { padding: 10px 20px 0; font-size: 14.4px; line-height: 20px; color: #adadb8; white-space: pre; }
+.bt-chatset-hint { display: none; position: absolute; left: 40px; right: 40px; top: 24px; text-align: center; }
+.bt-chatset--arranging .bt-chatset-hint { display: block; }
+.bt-chatset-hint-text { display: inline-block; padding: 10px 20px; border-radius: 10px; background: rgba(24, 24, 27, .92); color: #efeff1;
+                        font-size: 16.8px; line-height: 24px; white-space: pre; }
+/* Moving it: the chat outlined (the page's parent has the class) */
+.bt-chat-arranging .bt-chat { box-shadow: 0 0 0 3px #9147ff; }

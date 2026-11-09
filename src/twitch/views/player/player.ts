@@ -18,7 +18,7 @@
 // stops the playback only when it goes and still owns it. Where the viewer is in a past broadcast is kept every 15 s
 // while it shows, when it goes out of sight and when the app goes to the background.
 
-import { h, setShown, setText, toggleClass } from '../../../core/dom.js';
+import { h, setShown, setText, toggleClass, translate } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
 import { toast } from '../../../ui/toast.js';
 import { GateInfo } from '../../api/channel.js';
@@ -30,6 +30,7 @@ import { avatarAt } from '../../api/pictures.js';
 import { Channel, Clip, Item, LiveUpdate, Stream, Video } from '../../api/types.js';
 import { Failure } from '../../player/engine.js';
 import { Box, PlayOptions, SessionEvents, Target } from '../../player/session.js';
+import { PanelLayout } from '../../chat/panel.js';
 import { Watched } from '../../player/watch-time.js';
 import { Confirm } from '../confirm.js';
 import { Follow } from '../follow.js';
@@ -38,7 +39,8 @@ import { MenuMode, Navigator, Screen } from '../navigator.js';
 import { joinChat, QrPage } from '../qr.js';
 import { Rest } from '../rest.js';
 import { ago } from '../tiles.js';
-import { chatHidden, chatOver, setChatHidden } from './chat-choice.js';
+import { chatHidden, ChatLayout, chatLayout, lifted, setChatHidden, WHOLE } from './chat-choice.js';
+import { ChatSettings } from './chat-settings.js';
 import { startDim } from './start-dim.js';
 import { Direction, FocusGraph, Links } from './focus.js';
 import { uptime, viewers, views } from './format.js';
@@ -57,9 +59,6 @@ var IDLE_MS = 5000;
 var OPEN_IDLE_MS = 2375;
 /** The live line (title, category, viewers) is asked again this often, as Twitch's TV app does */
 var LIVE_INFO_MS = 60 * 1000;
-/** The picture: left of the chat, or the whole screen */
-var BESIDE_CHAT: Box = { left: 0, top: 0, width: 960, height: 720 };
-var WHOLE: Box = { left: 0, top: 0, width: 1280, height: 720 };
 /** Where the viewer is in a past broadcast is kept this often while the player shows (and when it goes) */
 var KEEP_MS = 15 * 1000;
 /** Twitch's words when a past broadcast plays a stretch it muted */
@@ -127,6 +126,8 @@ export interface ChatSide {
     /** "Join the conversation" (focused with bt-focused) */
     join: HTMLElement;
     show(on: boolean): void;
+    /** Laid out as the live chat settings say (chat/panel.ts) */
+    place(layout: PanelLayout): void;
     open(login: string): void;
     /** The picture plays: the channel's third-party emote lists may load now (they would compete with the start) */
     emotes(channelId: string): void;
@@ -167,6 +168,16 @@ var LINKS: { [kind: string]: Links } = {
         quality: { up: 'follow', left: 'options', right: 'chat' },
         chat: { up: 'follow', left: 'quality', right: 'join' },
         join: { up: 'follow' }
+    },
+    // Twitch's column at the left (live chat settings): its Join band left of the avatar
+    liveLeft: {
+        back: { down: 'avatar', right: 'follow', left: 'join' },
+        avatar: { up: 'back', right: 'follow', left: 'join' },
+        follow: { up: 'back', left: 'avatar', down: 'icons' },
+        options: { up: 'follow', left: 'avatar', right: 'quality' },
+        quality: { up: 'follow', left: 'options', right: 'chat' },
+        chat: { up: 'follow', left: 'quality' },
+        join: { up: 'back' }
     },
     vod: {
         back: { down: 'knob' },
@@ -231,9 +242,14 @@ export class PlayerView implements Screen {
     private resumeAt = 0;
     /** Over: a prompt (ended, failed) shows instead of the picture */
     private over = false;
+    /** The prompt over it is the commercial break's */
+    private inBreak = false;
     private chatShown = true;
-    /** Chat shows over the video, which stays full width (Settings) */
-    private chatOver = false;
+    /** Where chat goes and how it shows (live chat settings), and the classes for how it looks */
+    private chatAt: ChatLayout | null = null;
+    private chatLook = '';
+    /** The live chat settings page over the player, once opened */
+    private chatPage: ChatSettings | null = null;
     /** The chat's connection is open (with chat hidden at the start: once the chat button first shows it) */
     private chatJoined = false;
     /** The picture has played, and the chat's emote lists were asked for after it */
@@ -251,6 +267,8 @@ export class PlayerView implements Screen {
     private rest = new Rest();
 
     private controls: HTMLElement;
+    /** Where the picture is: its play sign, spinner and the overlay's shade */
+    private picture: HTMLElement;
     private back: HTMLElement;
     private avatar: HTMLImageElement;
     private nameEl: HTMLElement;
@@ -346,15 +364,19 @@ export class PlayerView implements Screen {
             },
             background: function () {
                 self.keep();
+            },
+            commercial: function (on: boolean) {
+                self.commercial(on);
             }
         };
         this.el = h('div', 'bt-pl bt-pl--' + this.kind);
-        var box = this.el.appendChild(h('div', 'bt-pl-box')) as HTMLElement;
+        var box = this.picture = this.el.appendChild(h('div', 'bt-pl-box')) as HTMLElement;
+        // The shade over the picture fades with the overlay; on the picture's layer, under chat placed over the
+        // picture and under the controls
+        box.appendChild(h('div', 'bt-pl-shade'));
         box.appendChild(h('div', 'bt-pl-play')).appendChild(icon('play'));
         box.appendChild(h('div', 'bt-pl-spin'));
         this.controls = this.el.appendChild(h('div', 'bt-pl-controls')) as HTMLElement;
-        // The shade over the picture fades with the overlay
-        this.controls.appendChild(h('div', 'bt-pl-shade'));
         this.back = this.controls.appendChild(h('div', 'bt-button bt-back bt-pl-back')) as HTMLElement;
         this.back.appendChild(h('span', 'bt-button-icon')).appendChild(chevronIcon());
         this.back.appendChild(h('span', '', 'Go Back'));
@@ -407,14 +429,12 @@ export class PlayerView implements Screen {
             this.chat = deps.chat(this.el);
             this.buttons.join = this.chat.join;
             this.chatShown = !chatHidden();
-            toggleClass(this.el, 'bt-pl--chatless', !this.chatShown);
-            this.chatOver = chatOver();
-            toggleClass(this.el, 'bt-pl--chatover', this.chatOver);
+            this.applyChat();
         }
         this.el.appendChild(this.prompt.el);
         this.el.appendChild(this.confirm.el);
 
-        this.focus = new FocusGraph(LINKS[this.kind], GROUPS[this.kind], this.kind === 'live' ? 'avatar' : 'knob', function (id: string) {
+        this.focus = new FocusGraph(this.links(), GROUPS[this.kind], this.kind === 'live' ? 'avatar' : 'knob', function (id: string) {
             return self.usable(id);
         });
         if (item.kind === 'vod') {
@@ -492,6 +512,9 @@ export class PlayerView implements Screen {
     hide(): void {
         this.visible = false;
         this.rest.cancel();
+        if (this.chatPage) {
+            this.chatPage.close();
+        }
         setShown(this.el, false);
         this.keep();
         this.deps.session.leave(this.events);
@@ -530,6 +553,13 @@ export class PlayerView implements Screen {
     }
 
     onKey(code: number): boolean {
+        if (this.chatPage && this.chatPage.shown) {
+            this.chatPage.onKey(code);
+            if (!this.chatPage.shown) {
+                this.wake();
+            }
+            return true;
+        }
         if (this.confirm.open) {
             return this.confirm.onKey(code);
         }
@@ -802,6 +832,10 @@ export class PlayerView implements Screen {
         if (on !== this.idle) {
             this.idle = on;
             toggleClass(this.el, 'bt-pl--idle', on);
+            // Chat over the video or along a strip keeps above the controls while they show
+            if (this.chatAt && this.chatAt.kind !== 'column') {
+                this.placeChat();
+            }
         }
         this.ticking(!on && this.visible);
     }
@@ -855,7 +889,8 @@ export class PlayerView implements Screen {
 
     private usable(id: string): boolean {
         if (id === 'join') {
-            return this.chatShown;
+            // Only Twitch's column has the Join band
+            return this.chatShown && !!this.chatAt && this.chatAt.kind === 'column';
         }
         if (id === 'full') {
             return !!this.videoId;
@@ -868,7 +903,8 @@ export class PlayerView implements Screen {
 
     private move(dir: Direction): void {
         var from = this.focus.current;
-        if (from === 'join' && dir === 'left') {
+        // From Join back where focus came from: towards the picture (right of a column at the left)
+        if (from === 'join' && dir === (this.chatAt && this.chatAt.room.left ? 'right' : 'left')) {
             this.focus.set(this.usable(this.beforeJoin) ? this.beforeJoin : 'follow');
         } else if (!this.focus.move(dir)) {
             return;
@@ -901,6 +937,7 @@ export class PlayerView implements Screen {
 
     /** OK on a control */
     private press(id: string): void {
+        var self = this;
         var deps = this.deps;
         if (id === 'back') {
             deps.nav.back();
@@ -911,7 +948,9 @@ export class PlayerView implements Screen {
         } else if (id === 'full') {
             this.watchFull();
         } else if (id === 'options') {
-            deps.nav.push(new OptionsPage(this.channel, this.kind === 'vod' ? this.target.id : '', deps.nav));
+            deps.nav.push(new OptionsPage(this.channel, this.kind === 'vod' ? this.target.id : '', deps.nav, this.chat ? function () {
+                self.openChatSettings();
+            } : undefined));
         } else if (id === 'quality') {
             if (this.quality.usable()) {
                 this.quality.show();
@@ -936,7 +975,7 @@ export class PlayerView implements Screen {
      * (the yellow key) with focus on its Join button, focus goes back where it came from */
     private setChat(on: boolean): void {
         this.chatShown = on;
-        toggleClass(this.el, 'bt-pl--chatless', !on);
+        this.applyChat();
         if (on) {
             this.joinChat();
         }
@@ -967,9 +1006,98 @@ export class PlayerView implements Screen {
         }
     }
 
-    /** The app's video under the screen: the box left of the chat, or the whole screen */
+    /** Chat as its settings have it (chat-choice.ts): its look's classes; the overlay's buttons where Twitch has them
+     * without chat unless chat shows as its column (at the left: the overlay right of it, focus to its Join band at the
+     * left); the picture's layer where the picture is, Go Back below a strip at the top; box: a box of its own being
+     * moved */
+    private applyChat(box?: Box): void {
+        if (!this.chat) {
+            return;
+        }
+        var at = this.chatAt = chatLayout(box);
+        var room = this.chatShown ? at.room : WHOLE;
+        var column = this.chatShown && at.kind === 'column';
+        toggleClass(this.el, 'bt-pl--chatless', !column);
+        this.controls.style.left = room.left ? room.left + 'px' : '';
+        var p = this.picture.style;
+        var video = this.chatShown ? at.video : null;
+        p.left = video ? video.left + 'px' : '';
+        p.top = video ? video.top + 'px' : '';
+        p.width = video ? video.width + 'px' : '';
+        p.height = video ? video.height + 'px' : '';
+        if (room.top) {
+            translate(this.back, 0, room.top);
+        } else {
+            this.back.style.webkitTransform = '';
+        }
+        if (this.focus) {
+            this.focus.setLinks(this.links());
+        }
+        var look = at.look;
+        if (look !== this.chatLook) {
+            var el = this.el;
+            var now = look.split(' ');
+            this.chatLook.split(' ').forEach(function (c) {
+                if (c && now.indexOf(c) < 0) {
+                    toggleClass(el, c, false);
+                }
+            });
+            now.forEach(function (c) {
+                if (c) {
+                    toggleClass(el, c, true);
+                }
+            });
+            this.chatLook = look;
+        }
+        this.placeChat();
+    }
+
+    /** The chat where its layout puts it: over the video or along a strip above the controls while they show (the
+     * panel does nothing when that is where it is) */
+    private placeChat(): void {
+        var at = this.chatAt as ChatLayout;
+        var place = at.place && at.kind !== 'column' && !this.idle ? lifted(at.place) : at.place;
+        (this.chat as ChatSide).place({ place: place, mode: at.mode, emotePx: at.emotePx, avatars: at.avatars, look: at.look });
+    }
+
+    /** The focus moves: a live player's with Twitch's column at the left has its Join band there */
+    private links(): Links {
+        var at = this.chatAt;
+        return this.chatShown && at && at.kind === 'column' && at.room.left ? LINKS.liveLeft : LINKS[this.kind];
+    }
+
+    /** The live chat settings over the player, its chat showing (shown if it was hidden), the overlay away; each change
+     * lays the chat and the video out at once */
+    private openChatSettings(): void {
+        var self = this;
+        if (!this.chat) {
+            return;
+        }
+        if (!this.chatShown) {
+            setChatHidden(false);
+            this.setChat(true);
+        }
+        if (!this.chatPage) {
+            this.chatPage = new ChatSettings(this.el, function (box?: Box) {
+                // Its first setting shows or hides the chat as the chat button does (laying it out)
+                if (chatHidden() === self.chatShown) {
+                    self.setChat(!chatHidden());
+                } else {
+                    self.applyChat(box);
+                    self.placeVideo();
+                }
+                if (self.focus.current === 'join' && !self.usable('join')) {
+                    self.focus.set('chat');
+                }
+            });
+        }
+        this.idleNow();
+        this.chatPage.open();
+    }
+
+    /** The app's video under the screen: where the chat's layout puts it while chat shows, else the whole screen */
     private placeVideo(): void {
-        this.deps.session.placeVideo(this.kind === 'live' && this.chatShown && !this.chatOver ? BESIDE_CHAT : WHOLE);
+        this.deps.session.placeVideo(this.chatShown && this.chatAt ? this.chatAt.video : WHOLE);
     }
 
     // The line
@@ -1107,6 +1235,7 @@ export class PlayerView implements Screen {
 
     /** A prompt over the picture, the quality menu closed (what plays is the caller's to stop) */
     private showOver(model: PromptModel): void {
+        this.inBreak = false;
         this.over = true;
         this.quality.close();
         this.drawFocus();
@@ -1118,6 +1247,23 @@ export class PlayerView implements Screen {
         this.over = false;
         this.prompt.set(null);
         toggleClass(this.el, 'bt-pl--over', false);
+    }
+
+    /** Every player type has the channel's commercial break (a Bolli screen: Twitch's app plays the commercial), or it
+     * ended: the screen goes when the stream is back */
+    private commercial(on: boolean): void {
+        var self = this;
+        if (on && !this.over) {
+            this.showOver({
+                picture: 'monitor', title: 'Commercial Break',
+                lines: [{ text: this.channel.displayName + ' is taking a commercial break. The stream comes back right after it.' }],
+                buttons: [{ label: 'Go Back', act: function () { self.deps.nav.back(); } }]
+            });
+            this.inBreak = true;
+        } else if (!on && this.inBreak) {
+            this.inBreak = false;
+            this.clearOver();
+        }
     }
 
     private streamEnded(): void {

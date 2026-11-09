@@ -162,7 +162,15 @@ function base(kind: MessageKind, line: IrcLine, login: string): Message {
     if (shown.toLowerCase() !== login) {
         shown += ' (' + login + ')';
     }
-    return { kind: kind, id: line.tags.id || '', login: login, name: shown, color: readableColor(line.tags.color || ''), badges: [], parts: [] };
+    var m: Message = { kind: kind, id: line.tags.id || '', login: login, name: shown, color: readableColor(line.tags.color || ''), badges: [], parts: [] };
+    // The sender's id (the Avatars setting asks for its picture) and when Twitch got it (Timestamps)
+    if (line.tags['user-id']) {
+        m.userId = line.tags['user-id'];
+    }
+    if (+line.tags['tmi-sent-ts']) {
+        m.at = +line.tags['tmi-sent-ts'];
+    }
+    return m;
 }
 
 /** The badges tag's pictures, in its order, those the lists know for the line's channel */

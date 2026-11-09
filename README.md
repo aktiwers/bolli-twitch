@@ -23,7 +23,7 @@ Bolli Twitch is not made by or connected to Twitch. You can watch without an acc
 - Home, Following, Browse and Search, like Twitch's TV app: the same layout, focus and remote keys
 - No ads: live streams and past broadcasts play ad-free, in full quality up to 1080p60
 - Fast: pages stay as you left them when you go back, and what you're likely to open next is fetched ahead
-- Chat next to the stream or over it, with Twitch, 7TV, BetterTTV and FrankerFaceZ emotes (hide it once and it stays hidden, the yellow button shows and hides it)
+- Chat where you like it: next to the stream like on Twitch, on the left, along the bottom or top, or over the video (Settings › Live Chat). It can scroll as a ticker, show timestamps and avatars and fade old messages, and it has Twitch, 7TV, BetterTTV and FrankerFaceZ emotes. Hide it once and it stays hidden; the yellow button shows and hides it
 - Earns channel points while you watch, and claims the bonus for you
 - Past broadcasts and clips on every channel page
 - Sign in with a code: open twitch.tv/activate on your phone (or scan the QR code) and your follows show up

@@ -9,6 +9,12 @@ import { unready } from '../player/session.js';
 /** The wait before a stream, video or channel is fetched; a category's page and a search ask more and wait longer */
 export var REST_MS = 600;
 export var REST_LONG_MS = 900;
+var restMs = REST_MS;
+
+/** The test hook's: the wait before a stream, video or channel is fetched, for this run (0: the default) */
+export function setRestMs(ms: number): void {
+    restMs = ms > 0 ? ms : REST_MS;
+}
 
 /** What fetches an item's screen ahead (a stream's playback, a channel's page, a category's first channels) */
 export type Ahead = (item: Item) => Promise<unknown> | void;
@@ -41,7 +47,7 @@ export class Rest {
             this.cancel();
             return;
         }
-        this.wait(item.kind === 'game' ? REST_LONG_MS : REST_MS, function () {
+        this.wait(item.kind === 'game' ? REST_LONG_MS : restMs, function () {
             return ahead(item);
         });
     }

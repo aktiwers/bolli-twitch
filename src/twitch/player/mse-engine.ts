@@ -62,6 +62,24 @@ function hundredths(s: number): number {
     return Math.round(s * 100) / 100;
 }
 
+/** A playlist's average segment length as its real segments have it: a windowed past broadcast's gap segments stand
+ * for hours (master.ts windowed), and hls.js's quality choice, which reads the average, took 68 s for 10 s segments
+ * and dropped to 360p */
+function realAverage(details: { fragments?: { duration: number; gap?: boolean }[]; averagetargetduration?: number } | null): void {
+    var frags = details && details.fragments;
+    var total = 0;
+    var count = 0;
+    for (var i = 0; frags && i < frags.length; i++) {
+        if (!frags[i].gap) {
+            total += frags[i].duration;
+            count++;
+        }
+    }
+    if (details && frags && count && count < frags.length) {
+        details.averagetargetduration = total / count;
+    }
+}
+
 /** What the playlist loader serves or changes for one hls.js instance */
 interface Playlists {
     /** Served for the manifest (once) */
@@ -70,6 +88,8 @@ interface Playlists {
     level: Fetched | null;
     /** Every media playlist goes through it */
     filter: ((text: string) => string) | null;
+    /** Every fetched media playlist may be swapped for another text before the filter (Source.swap) */
+    swap: ((url: string, text: string) => Promise<string> | null) | null;
     /** A segment fetched ahead: served instead of a fetch when its address is asked (once) */
     segment: SegmentAhead | null;
 }
@@ -132,9 +152,27 @@ function loadPlaylist(this: any, context: any, config: unknown, callbacks: any):
     if (kept && (!level || kept.url === context.url)) {
         serve(this.inner, context, filter ? filter(kept.text) : kept.text, callbacks);
     } else if (filter) {
-        this.inner.load(context, config, changing(callbacks, function (data: any) {
-            return typeof data === 'string' ? (filter as (text: string) => string)(data) : data;
-        }));
+        var self = this;
+        var swap = level ? lists.swap : null;
+        var wrapped = copied(callbacks);
+        wrapped.onSuccess = function (response: any, stats: unknown, ctx: unknown, details: unknown) {
+            var raw = response.data;
+            var other = swap && typeof raw === 'string' ? swap(context.url, raw) : null;
+            var deliver = function (text: any): void {
+                response.data = typeof text === 'string' ? (filter as (text: string) => string)(text) : text;
+                callbacks.onSuccess(response, stats, ctx, details);
+            };
+            if (other) {
+                other.then(function (text) {
+                    if (!self.aborted) {
+                        deliver(text);
+                    }
+                });
+            } else {
+                deliver(raw);
+            }
+        };
+        this.inner.load(context, config, wrapped);
     } else {
         this.inner.load(context, config, callbacks);
     }
@@ -375,12 +413,18 @@ export class MseEngine implements Engine {
         hls.config.progressive = true;
         // A live playlist grown old while hls.js loaded is asked again: hls.js starts behind the newest segment it knows
         var fresh = !live || !level || Date.now() - level.at < LIVE_LEVEL_MS;
-        var lists: Playlists = { master: { url: source.url, text: source.master }, level: fresh ? level : null, filter: source.filter || null, segment: segment };
+        var lists: Playlists = {
+            master: { url: source.url, text: source.master }, level: fresh ? level : null, filter: source.filter || null, swap: source.swap || null,
+            segment: segment
+        };
         Object.defineProperty(hls.config, PLAYLISTS, { value: lists });
         hls.on(E.MANIFEST_PARSED, function () {
             if (self.hls === hls) {
                 self.parsed(hls, source);
             }
+        });
+        hls.on(E.LEVEL_LOADED, function (event, data) {
+            realAverage(data.details);
         });
         /** A taken pipeline: the newest media playlist's end (s), its duration once the video stands in the stream */
         var end = 0;

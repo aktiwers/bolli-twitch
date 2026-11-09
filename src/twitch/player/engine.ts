@@ -50,6 +50,9 @@ export interface Source {
     segment?: SegmentAhead;
     /** Live streams on the Media Source engine: every media playlist goes through it (stitched segments become gaps) */
     filter?: (text: string) => string;
+    /** Live streams on the Media Source engine: a media playlist as fetched (its address and text) goes on as another
+     * text the session finds for it (a commercial break left behind), or null for as it is */
+    swap?: (url: string, text: string) => Promise<string> | null;
 }
 
 export interface EngineEvents {

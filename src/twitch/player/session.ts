@@ -27,7 +27,7 @@ import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
 import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, usherCode, UsherVersion } from '../api/playback.js';
 import { aheadOf, Delay, Engine, EngineEvents, Failure, FailureKind, Fetched, playVideo, Quality, showVideo, Source } from './engine.js';
-import { liveTarget, mediaSourcePlays, mutedRanges, parseQualities, pastBroadcast, segmentStart } from './master.js';
+import { liveTarget, mediaSourcePlays, mutedRanges, parseQualities, pastBroadcast, segmentStart, windowed } from './master.js';
 import { hasAds, markAdGaps } from './ads.js';
 import { SegmentAhead, segmentAhead } from './segment.js';
 import { stabilize } from './stable-volume.js';
@@ -79,6 +79,9 @@ export interface SessionEvents {
     failed?(failure: Failure): void;
     /** The app goes to the background: the pipeline goes right after (where it stands can still be read) */
     background?(): void;
+    /** A live stream's commercial break that every player type has (true; it plays on without the break, its picture
+     * standing), or its end */
+    commercial?(on: boolean): void;
 }
 
 /** What plays, for the overlay and the tests (no token or address) */
@@ -104,6 +107,8 @@ export interface PlaybackState {
     paused: boolean;
     /** How often stitched segments showed up (each time the next player type was asked) */
     adBreaks: number;
+    /** Media playlists with a commercial break that went on as another player type's without it */
+    swaps: number;
     /** Engine starts in this playback (a hand-over adds none) */
     starts: number;
     /** Why it stopped ('' while it plays) */
@@ -118,6 +123,15 @@ var AHEAD_MS = 60 * 1000;
 var READY_LIVE_MS = 20 * 1000;
 /** A live stream on the TV's own player has its playlist looked at for stitched segments this often */
 var AD_CHECK_MS = 20 * 1000;
+/** A long past broadcast's window moves this long before playback reaches its end */
+var REWINDOW_S = 60;
+/** A live stream's spare player type is asked this long after its engine started (out of the start's way), then this
+ * often */
+var SPARE_FIRST_MS = 15 * 1000;
+var SPARE_MS = 10 * 60 * 1000;
+/** Spare player types by preference (indexes in PLAYER_TYPES): embed last, the type Twitch put its breaks into
+ * while we watched */
+var SPARE_ORDER = [2, 0, 3, 1];
 /** Network and media failures tried again per failure episode */
 var RETRIES = 2;
 /** The wait before a retry, times the retry's number */
@@ -181,6 +195,13 @@ interface Playback {
     /** The run whose stitched segments were acted on */
     adsRun: number;
     adBreaks: number;
+    swaps: number;
+    /** A live stream's spare: another player type's qualities, ready for a commercial break, and when it was last
+     * asked (or the engine started) */
+    spare: { type: number; qualities: Quality[]; at: number } | null;
+    spareAt: number;
+    /** Every player type has the commercial break now (the screen was told) */
+    inBreak: boolean;
     retries: number;
     /** Since when the picture moves after the last failure (0: not since) */
     movingSince: number;
@@ -191,6 +212,9 @@ interface Playback {
     at: number;
     /** The past broadcast still records: its playlist got an end (pastBroadcast), so it goes on at that end */
     recording: boolean;
+    /** A long past broadcast's window in hls.js (master.ts windowed): its start, end and the broadcast's end; null for
+     * the whole */
+    window: { from: number; to: number; end: number } | null;
     /** The end it last went on from (s; 0: none) */
     wentOnAt: number;
     /** The viewer paused: every engine start holds it */
@@ -273,6 +297,10 @@ export function videoElement(): HTMLVideoElement {
             if (now && now.shown && now.target.kind !== 'live' && v.readyState >= 2) {
                 now.at = v.currentTime;
                 mutedNow(now, v.currentTime);
+                // Only within the window: right after a start the video may still say where the last one stood
+                if (nearWindowEnd(now, v.currentTime)) {
+                    rewindow(now, v.currentTime);
+                }
             }
         });
     }
@@ -520,8 +548,8 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         target: { kind: target.kind, id: target.id, startAt: startAt },
         files: target.files && target.files.length ? target.files : null, events: events, options: opts,
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
-        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, retries: 0, movingSince: 0,
-        startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, wentOnAt: 0, paused: false, left: false, held: false,
+        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, swaps: 0, spare: null, spareAt: 0, inBreak: false, retries: 0, movingSince: 0,
+        startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, window: null, wentOnAt: 0, paused: false, left: false, held: false,
         ahead: false, muted: [], inMuted: false, failed: '', adTimer: 0, retryTimer: 0
     };
     applyOptions(p, opts);
@@ -720,20 +748,158 @@ function adsShowedUp(p: Playback): void {
 function liveFilter(p: Playback): (text: string) => string {
     return function (text: string): string {
         var r = markAdGaps(text);
-        if (r.ads && p === now) {
-            adsShowedUp(p);
+        if (p === now) {
+            breakNow(p, r.ads);
+            keepSpare(p);
         }
         return liveTarget(r.text);
     };
 }
 
-/** A past broadcast's media playlists on the Media Source engine: one date tag, and an end while it records */
-function vodFilter(p: Playback): (text: string) => string {
+/** Stitched segments still in what plays (every player type has the break: the swap found none without it), or not
+ * any more: the screen is told when that changes */
+function breakNow(p: Playback, on: boolean): void {
+    if (on === p.inBreak) {
+        return;
+    }
+    p.inBreak = on;
+    if (on) {
+        p.adBreaks++;
+    }
+    if (p.events.commercial) {
+        p.events.commercial(on);
+    }
+}
+
+/** The test hook's: every live media playlist taken for one with a commercial break (the swap then runs as in one) */
+var breakForced = false;
+
+export function forceBreak(on: boolean): void {
+    breakForced = on;
+}
+
+/** The test hook's: the screen told that every player type has a commercial break (true), or that it ended */
+export function showBreak(on: boolean): void {
+    if (now) {
+        breakNow(now, on);
+    }
+}
+
+/** A live stream's media playlists with a commercial break go on as the same quality's playlist of another player
+ * type without it: the running hls.js simply goes on (the types' playlists line up, the same segments with the same
+ * numbers, dates and addresses; only the stitched ones differ), so nothing restarts. The spare type is asked first,
+ * then all others at once; with every type in the break the text as it is (its stitched segments become gaps) */
+function swapper(p: Playback): (url: string, text: string) => Promise<string> | null {
+    return function (url: string, text: string): Promise<string> | null {
+        if (p !== now || !(breakForced || hasAds(text))) {
+            return null;
+        }
+        var name = '';
+        var list = p.source ? p.source.qualities : [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].url === url) {
+                name = list[i].name;
+            }
+        }
+        var spare = p.spare;
+        var first = spare && spare.type !== p.type ? levelOf(spare.qualities, name) : Promise.resolve(null);
+        return first.then(function (clean) {
+            return clean !== null && !hasAds(clean) ? clean : otherTypes(p, name, spare ? spare.type : -1);
+        }).then(function (clean) {
+            if (clean !== null && p === now) {
+                p.swaps++;
+            }
+            return clean !== null ? clean : text;
+        });
+    };
+}
+
+/** The media playlist of the quality called name in list (the first when none is), or null when it cannot be had */
+function levelOf(list: Quality[], name: string): Promise<string | null> {
+    var q = list[0];
+    for (var i = 0; i < list.length; i++) {
+        if (list[i].name === name) {
+            q = list[i];
+        }
+    }
+    return q ? getText(q.url, 5000).then(null, function () { return null; }) : Promise.resolve(null);
+}
+
+/** The first player type (in SPARE_ORDER; not p's, nor skip) whose quality called name has no stitched segments, all
+ * asked at once: its playlist (that type becomes the spare), or null */
+function otherTypes(p: Playback, name: string, skip: number): Promise<string | null> {
+    return Promise.all(PLAYER_TYPES.map(function (playerType, type) {
+        if (type === p.type || type === skip) {
+            return Promise.resolve(null);
+        }
+        return resolveStream(p.target, type, p.usher, p.withAccount).then(function (r) {
+            return levelOf(r.qualities, name).then(function (text) {
+                return text !== null && !hasAds(text) ? { type: type, qualities: r.qualities, text: text } : null;
+            });
+        }, function () { return null; });
+    })).then(function (found) {
+        for (var i = 0; i < SPARE_ORDER.length; i++) {
+            var f = found[SPARE_ORDER[i]];
+            if (f) {
+                if (p === now) {
+                    p.spare = { type: f.type, qualities: f.qualities, at: Date.now() };
+                }
+                return f.text;
+            }
+        }
+        return null;
+    });
+}
+
+/** Keeps p's spare as its media playlists come (every 2 s while live plays): the first type of SPARE_ORDER that is
+ * not p's, resolved SPARE_FIRST_MS after the engine started and then every SPARE_MS (its addresses carry a token that
+ * runs out) */
+function keepSpare(p: Playback): void {
+    var t = Date.now();
+    if (t - p.spareAt < (p.spare ? SPARE_MS : SPARE_FIRST_MS)) {
+        return;
+    }
+    p.spareAt = t;
+    var type = SPARE_ORDER[0] === p.type ? SPARE_ORDER[1] : SPARE_ORDER[0];
+    resolveStream(p.target, type, p.usher, p.withAccount).then(function (r) {
+        if (p === now) {
+            p.spare = { type: type, qualities: r.qualities, at: Date.now() };
+        }
+    }, noop);
+}
+
+/** A past broadcast's media playlists on the Media Source engine: one date tag, an end while it records, and a long
+ * one cut to a window around at (where this start begins) */
+function vodFilter(p: Playback, at: number): (text: string) => string {
     return function (text: string): string {
         var r = pastBroadcast(text);
         p.recording = r.recording;
-        return r.text;
+        var w = windowed(r.text, at);
+        p.window = w ? { from: w.from, to: w.to, end: w.end } : null;
+        return w ? w.text : r.text;
     };
+}
+
+/** A long past broadcast goes on from at with a window around it: its engine started again there */
+function rewindow(p: Playback, at: number): void {
+    p.window = null;
+    p.at = at;
+    if (p.source) {
+        startEngine(p, p.source, null);
+    }
+}
+
+/** Whether playback at at is in the last REWINDOW_S of p's window, with more of the broadcast after it (a position
+ * outside the window is one the video still says from the start before) */
+function nearWindowEnd(p: Playback, at: number): boolean {
+    var w = p.window;
+    return !!w && w.to < w.end && at > w.to - REWINDOW_S && at <= w.to;
+}
+
+/** Whether a seek to at leaves p's window (before it, or near or past its end) */
+function outsideWindow(p: Playback, at: number): boolean {
+    var w = p.window;
+    return !!w && (at < w.from || (w.to < w.end && at > w.to - REWINDOW_S));
 }
 
 /** Starts p's engine on source. token: a new one for it, which was asked as p's player type; adFree: that start was
@@ -772,8 +938,10 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
     }
     if (source.kind === 'live' && p.engineName === 'mse') {
         source.filter = liveFilter(p);
+        source.swap = swapper(p);
+        p.spareAt = Date.now();
     } else if (source.kind === 'vod' && p.engineName === 'mse') {
-        source.filter = vodFilter(p);
+        source.filter = vodFilter(p, source.startAt || 0);
     }
     var run = ++p.run;
     clearTimeout(p.adTimer);
@@ -1175,6 +1343,10 @@ export function seek(seconds: number): void {
     var p = now;
     if (p && p.target.kind !== 'live') {
         var at = Math.max(0, seconds);
+        if (outsideWindow(p, at)) {
+            rewindow(p, at);
+            return;
+        }
         p.at = p.engine && p.engine.seekTarget ? p.engine.seekTarget(at) : at;
         videoElement().currentTime = p.at;
     }
@@ -1249,6 +1421,7 @@ export function playbackState(): PlaybackState | null {
         decodedFrames: q ? q.totalVideoFrames : v.webkitDecodedFrameCount || 0,
         paused: v.paused,
         adBreaks: p.adBreaks,
+        swaps: p.swaps,
         starts: p.run,
         failed: p.failed
     };

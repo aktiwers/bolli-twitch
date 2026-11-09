@@ -48,6 +48,11 @@ export interface Message {
     notice?: Part[];
     /** A "/me" message: the colour of its text, the sender's own as sent */
     action?: string;
+    /** The sender's user id, and when Twitch got the message (ms) */
+    userId?: string;
+    at?: number;
+    /** Deleted by the channel: drawn as such */
+    deleted?: boolean;
 }
 
 export interface ChatEvents {

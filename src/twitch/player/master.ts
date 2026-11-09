@@ -156,6 +156,60 @@ export function pastBroadcast(text: string): { text: string; recording: boolean 
     return { text: (out.charAt(out.length - 1) === '\n' ? out : out + '\n') + END_TAG + '\n', recording: true };
 }
 
+/** A past broadcast longer than this many segments is handed to hls.js as a window around where it plays: hls.js
+ * makes an object of every segment and walks them all, which held the TV's page for seconds with 17,000 (48 h) */
+var WINDOW_SEGMENTS = 2600;
+/** The window: from this long before where it plays to this long after (about a normal past broadcast's length) */
+var WINDOW_BEFORE_S = 3600;
+var WINDOW_AFTER_S = 6 * 3600;
+
+/** A long past broadcast's playlist (pastBroadcast's) with only the segments around at: those before and after the
+ * window each stood in for by one gap segment of their whole length, so times and the length stay as they are and
+ * hls.js loads nothing there; from and to are the window's start and end, end the broadcast's. null for a playlist
+ * short enough as it is */
+export function windowed(text: string, at: number): { text: string; from: number; to: number; end: number } | null {
+    var lines = text.split('\n');
+    var segments: { start: number; duration: number; first: number; last: number }[] = [];
+    var time = 0;
+    var first = -1;
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf('#EXTINF:') === 0) {
+            first = first < 0 ? i : first;
+            var duration = parseFloat(line.slice(8)) || 0;
+            segments.push({ start: time, duration: duration, first: i, last: i });
+            time += duration;
+        } else if (line && line.charAt(0) !== '#' && segments.length) {
+            segments[segments.length - 1].last = i;
+        }
+    }
+    if (segments.length <= WINDOW_SEGMENTS) {
+        return null;
+    }
+    var from = 0;
+    while (from < segments.length - 1 && segments[from].start + segments[from].duration <= at - WINDOW_BEFORE_S) {
+        from++;
+    }
+    var to = from;
+    while (to < segments.length - 1 && segments[to + 1].start < at + WINDOW_AFTER_S) {
+        to++;
+    }
+    var out = lines.slice(0, first);
+    var gap = function (a: number, b: number): void {
+        var length = segments[b].start + segments[b].duration - segments[a].start;
+        out.push('#EXTINF:' + length.toFixed(3) + ',', '#EXT-X-GAP', lines[segments[a].last]);
+    };
+    if (from > 0) {
+        gap(0, from - 1);
+    }
+    out = out.concat(lines.slice(segments[from].first, segments[to].last + 1));
+    if (to < segments.length - 1) {
+        gap(to + 1, segments.length - 1);
+    }
+    out = out.concat(lines.slice(segments[segments.length - 1].last + 1));
+    return { text: out.join('\n'), from: segments[from].start, to: segments[to].start + segments[to].duration, end: time };
+}
+
 /** Video codecs by their sample entry (the codecs list's other entries are audio) */
 var VIDEO_CODEC = /^(avc[1-4]|hvc1|hev1|dvh1|dvhe|dva1|dvav|av01|vp08|vp09)\b/;
 

@@ -38,13 +38,16 @@ var ICONS: { [name: string]: string } = {
     privacy: duo('<path d="' + GHOST + '"/>', '<path d="' + GHOST + '"/>',
         '<circle cx="28" cy="28" r="3.2" fill="currentColor"/><circle cx="39" cy="28" r="3.2" fill="currentColor"/>'),
     cookies: duo(BAG, '<path d="M28 24v-5a8 8 0 0 1 16 0v5"/>', '<rect x="20" y="24" width="32" height="30" rx="4" fill="currentColor"/>'),
-    // Bolli's own settings in the same style: a chat bubble, a smiling face, a screen with a column, a screen dark at
-    // the bottom, a raised hand, a speaker, a coin, a stack of servers, a screen, an i
+    // Bolli's own settings in the same style: a chat bubble, a smiling face, a screen with a column, one with lines in
+    // the column, one with the column half dark, a screen dark at the bottom, a raised hand, a speaker, a coin, a
+    // stack of servers, a screen, an i
     notices: duo('<path d="M12 12h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H28l-10 8v-8h-6a4 4 0 0 1-4-4V16a4 4 0 0 1 4-4Z"/>',
         '<path d="M16 8h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H32l-10 8v-8h-6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4Z"/>'),
     emotes: duo(ROUND, ROUND + '<path d="M24 35a10 10 0 0 0 16 0"/>',
         '<circle cx="25" cy="25" r="3.2" fill="currentColor"/><circle cx="39" cy="25" r="3.2" fill="currentColor"/>'),
     layout: duo(SCREEN, SCREEN + '<path d="M40 12v36"/>'),
+    chatsize: duo(SCREEN, SCREEN + '<path d="M40 12v36M44 22h8M44 30h8M44 38h5"/>'),
+    shade: duo(SCREEN, SCREEN + '<path d="M40 12h13a3 3 0 0 1 3 3v30a3 3 0 0 1-3 3H40Z" fill="currentColor" fill-opacity=".5"/>'),
     dim: duo(SCREEN, SCREEN + '<path d="M8 33h48v12a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3Z" fill="currentColor"/>'),
     gate: duo('<path d="' + HAND + '"/>', '<path d="' + HAND + '"/>'),
     volume: duo('<path d="' + SPEAKER + '"/>', '<path d="' + SPEAKER + '"/><path d="M42 22a12 12 0 0 1 0 20M48 15a21 21 0 0 1 0 34"/>'),
@@ -156,8 +159,8 @@ var BIG: { [name: string]: string } = {
         '<path d="M326 116v160"' + EDGE + '/>')
 };
 
-/** A Settings card's icon: profile, help, terms, privacy, cookies (Twitch's), notices, emotes, layout, dim, gate,
- * volume, points, usher, quality, version (Bolli's) */
+/** A Settings card's icon: profile, help, terms, privacy, cookies (Twitch's), notices, emotes, layout, chatsize,
+ * shade, dim, gate, volume, points, usher, quality, version (Bolli's) */
 export function cardIcon(name: string): Node {
     return svgNode(ICONS[name]);
 }
