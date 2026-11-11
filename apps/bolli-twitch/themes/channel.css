@@ -22,6 +22,14 @@
 .bt-ch-more { -webkit-transition: opacity .25s ease-in-out; }
 .bt-ch--rows .bt-ch-band, .bt-ch--rows .bt-ch-veil { opacity: 1; visibility: inherit; -webkit-transition: opacity .25s ease-in-out, visibility 0s; }
 .bt-ch--rows .bt-ch-more { opacity: 0; }
+/* The rows' own box (channel.ts); with Keep Live Preview the preview moves up beside the shrunk header (preview.ts
+   RAISED, 96 to 294): the band is a frame clear there, no veil, and the rows are cut at the band's end so those above
+   the focused one do not show through */
+.bt-ch-clip { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; }
+.bt-ch--keep .bt-ch-band { box-sizing: border-box; background: transparent; border: solid #0e0e10; border-width: 96px 60px 6px 868.67px; }
+.bt-ch--keep.bt-ch--rows .bt-ch-veil { visibility: hidden; }
+.bt-ch--keep .bt-ch-clip { top: 300px; height: 420px; overflow: hidden; }
+.bt-ch--keep .bt-ch-rows { top: -300px; }
 
 /* The header: avatar 76.67 round at 60,168; LIVE NOW (red) or OFFLINE (grey), the name, followers; "About <name>:"
    and up to four lines of description; Follow and Report at y 388 (268.67 without a description) */

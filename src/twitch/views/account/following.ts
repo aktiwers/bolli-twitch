@@ -1,8 +1,8 @@
 // Following (signed in) as Twitch's TV app shows it: with follows, Home's look (the hero over rows) with the followed
 // rows (Live Followed Channels, Followed Categories, Followed Offline Channels, the last in Twitch's narrow channel
 // cards, eight to a row); with none, the "Follow your favorites!" card over Home's rows. Built once and kept, so Back
-// finds the same row and tile; shown again after STALE_MS it asks the followed rows again and puts them in place (in
-// sight once they leave sight). The live and offline rows go on a page at a time as focus nears their end
+// finds the same row and tile; shown again after STALE_MS (Back to it, or the app back in front) it asks the followed
+// rows again and puts them in place (in sight once they leave sight; at once when older than IN_SIGHT_MS). The live and offline rows go on a page at a time as focus nears their end
 // (views/pager.ts). For an account that followed nothing when last asked (kept on the TV), Home's rows are asked at
 // the same time as the followed ones.
 
@@ -23,8 +23,9 @@ var FOCUS_TOP = 360;
 var CARD_SHIFT = -68.67;
 /** Focus resting this long fetches the hero pictures around it */
 var AHEAD_MS = 200;
-/** Shown again after this long: the followed rows are asked again */
+/** Shown again after this long: the followed rows are asked again; older than IN_SIGHT_MS, also those in sight */
 var STALE_MS = 60000;
+var IN_SIGHT_MS = 10 * 60 * 1000;
 /** The account that followed nothing when last asked */
 var NONE_KEY = 'twitch.following.none';
 
@@ -45,6 +46,7 @@ export class FollowingView implements Screen {
     /** Focus resting on a tile: what it opens fetched ahead */
     private rest = new Rest();
     private gone = false;
+    private onVisible: () => void;
 
     /** followed: the followed rows (none: the account follows nothing); suggestions: Home's rows */
     constructor(private nav: Navigator, private followed: () => Promise<Shelf[]>, private suggestions: ShelfLoader) {
@@ -60,6 +62,13 @@ export class FollowingView implements Screen {
         setShown(this.card, false);
         this.rows = this.makeRows(null);
         setShown(this.el, false);
+        var self = this;
+        this.onVisible = function () {
+            if (!document.hidden && self.shown) {
+                self.refreshIfOld();
+            }
+        };
+        document.addEventListener('visibilitychange', this.onVisible, false);
     }
 
     show(): void {
@@ -69,6 +78,10 @@ export class FollowingView implements Screen {
         this.rows.stack.setShown(true);
         this.heroItem = null;
         this.showHero();
+        this.refreshIfOld();
+    }
+
+    private refreshIfOld(): void {
         if (this.loadedAt && Date.now() - this.loadedAt > STALE_MS) {
             this.refresh();
         }
@@ -90,6 +103,7 @@ export class FollowingView implements Screen {
 
     destroy(): void {
         this.gone = true;
+        document.removeEventListener('visibilitychange', this.onVisible, false);
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
         this.hero.pause();
@@ -188,6 +202,7 @@ export class FollowingView implements Screen {
             return;
         }
         this.refreshing = true;
+        var atOnce = Date.now() - this.loadedAt > IN_SIGHT_MS;
         var self = this;
         this.followed().then(function (shelves) {
             self.refreshing = false;
@@ -202,7 +217,7 @@ export class FollowingView implements Screen {
                 self.rows.stack.setShown(self.shown);
                 self.rows.setFocused(self.focused);
             } else if (shelves.length) {
-                self.rows.refresh({ items: shelves });
+                self.rows.refresh({ items: shelves }, atOnce);
             }
             if (self.shown) {
                 self.showHero();

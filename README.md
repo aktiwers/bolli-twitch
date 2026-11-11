@@ -25,7 +25,7 @@ Bolli Twitch is not made by or connected to Twitch. You can watch without an acc
 - Fast: pages stay as you left them when you go back, and what you're likely to open next is fetched ahead
 - Chat where you like it: next to the stream like on Twitch, on the left, along the bottom or top, or over the video (Settings › Live Chat). It can scroll as a ticker, show timestamps and avatars and fade old messages, and it has Twitch, 7TV, BetterTTV and FrankerFaceZ emotes. Hide it once and it stays hidden; the yellow button shows and hides it
 - Earns channel points while you watch, and claims the bonus for you
-- Past broadcasts and clips on every channel page
+- Past broadcasts and clips on every channel page, and with Keep Live Preview (Settings) the channel's live picture stays in view while you look through them
 - Sign in with a code: open twitch.tv/activate on your phone (or scan the QR code) and your follows show up
 - Search with suggestions as you type
 - Pick the quality, and it can remember it for the next streams
@@ -51,6 +51,8 @@ A new version installs the same way, over the old one. You stay signed in.
 ## LG webOS
 
 For LG TVs with the webOS Homebrew Channel (rooted or in developer mode).
+
+It needs webOS 3 or newer. The oldest LG TVs (webOS 1-2, from 2014-2015) can't make the secure connection Twitch requires, so the app opens there but can't load anything.
 
 The easiest way is to add my Homebrew repository. Then Bolli Twitch is in the Homebrew Channel's list, and new versions show up there as updates:
 

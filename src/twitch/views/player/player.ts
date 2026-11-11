@@ -674,6 +674,8 @@ export class PlayerView implements Screen {
         this.clipFile.then(function (c: ClipFile) {
             self.videoId = c.clip.videoId || '';
             self.videoOffset = c.clip.videoOffset || 0;
+            // No broadcast to go to: no Watch Full Video, as in Twitch's app
+            toggleClass(self.el, 'bt-pl--nofull', !self.videoId);
             if (self.track) {
                 self.track.setDuration(c.clip.durationSeconds);
             }

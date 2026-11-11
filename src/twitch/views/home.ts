@@ -2,7 +2,9 @@
 // the same place, the row below it under a fade. Unlike Twitch's app it is built once and stays alive behind other
 // screens, so Back finds the same row and tile. The first rows draw at once from a copy kept from the last start (one
 // per account) while the fresh ones are asked; fresh rows replace them where they are out of sight. A copy older
-// than STALE_MS is replaced at once, and until then only the hero and the focused row ask their pictures.
+// than STALE_MS is replaced at once, and until then only the hero and the focused row ask their pictures. Shown again
+// (Back to it, or the app back in front: webOS keeps the page) with rows older than STALE_MS, it asks them again and
+// puts them in place at once (streams in them may have ended hours ago).
 
 import { h, setShown } from '../../core/dom.js';
 import { mark } from '../../core/perf.js';
@@ -58,6 +60,9 @@ export class HomeView implements Screen {
     /** The first fresh rows, until written to the kept copy */
     private unsaved: Kept | null = null;
     private saveTimer = 0;
+    /** When the first fresh rows came (0: not yet), and the app coming back in front */
+    private freshAt = 0;
+    private onVisible: () => void;
 
     constructor(loader: ShelfLoader, private nav: Navigator) {
         this.el = h('div', 'bt-home');
@@ -94,6 +99,12 @@ export class HomeView implements Screen {
             self.el.removeEventListener('load', check, true);
             self.el.removeEventListener('error', check, true);
         };
+        this.onVisible = function () {
+            if (!document.hidden && self.shown) {
+                self.refreshIfOld();
+            }
+        };
+        document.addEventListener('visibilitychange', this.onVisible, false);
     }
 
     show(): void {
@@ -104,6 +115,14 @@ export class HomeView implements Screen {
         // Rows that changed meanwhile, and a picture change that waited
         this.heroItem = null;
         this.showHero();
+        this.refreshIfOld();
+    }
+
+    /** Rows older than STALE_MS asked again, in place at once */
+    private refreshIfOld(): void {
+        if (this.freshAt && Date.now() - this.freshAt > STALE_MS) {
+            this.rows.reload(true);
+        }
     }
 
     /** Hidden under another screen: it keeps its pictures, so it shows at once on Back */
@@ -128,6 +147,7 @@ export class HomeView implements Screen {
         clearTimeout(this.saveTimer);
         this.hero.pause();
         this.unwatch();
+        document.removeEventListener('visibilitychange', this.onVisible, false);
         this.rows.destroy();
     }
 
@@ -186,6 +206,7 @@ export class HomeView implements Screen {
     private fresh(first: boolean, shelves: Shelf[]): void {
         if (first) {
             mark('home-fresh');
+            this.freshAt = Date.now();
             this.waitsFresh = false;
             if (this.shown) {
                 this.rows.stack.setNarrow(false);

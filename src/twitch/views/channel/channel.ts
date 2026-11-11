@@ -11,7 +11,8 @@
 // pauses. The header draws at once from what the opener knows; a page asked ahead or kept from a visit in the last
 // minutes draws whole at once, a fresh copy put in behind it. Every return to the page asks it again (within the
 // minute the answer is the one there), and so does the live preview failing, so a stream that ended or started
-// shows as it is; a stream gated or gone stops playing in the box.
+// shows as it is; a stream gated or gone stops playing in the box. With Settings' Keep Live Preview the preview moves
+// up beside the shrunk header instead of being covered (the band leaves it clear, the rows are cut at its end).
 
 import { h, setShown, setText, toggleClass, translate } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
@@ -31,6 +32,7 @@ import { RowStack } from '../rows.js';
 import { StateBox } from '../state.js';
 import { count, setSource, streamItem, videoItem } from '../tiles.js';
 import { askPage, keptPage, PageLoader } from './data.js';
+import { keepPreview } from './keep-preview.js';
 import { Preview, PreviewPlayer } from './preview.js';
 
 /** The focused row's title (450 of 1080), and how much lower the rows sit while the header is whole (684) */
@@ -88,7 +90,8 @@ export class ChannelView implements Screen {
         this.el = h('div', 'bt-ch');
         // Under the rows: the preview's lower part, covered while the rows have focus
         this.el.appendChild(h('div', 'bt-ch-veil'));
-        this.rowsEl = this.el.appendChild(h('div', 'bt-ch-rows')) as HTMLElement;
+        // (the rows in a box of their own: cut at the band's end while the preview stays in view)
+        this.rowsEl = this.el.appendChild(h('div', 'bt-ch-clip')).appendChild(h('div', 'bt-ch-rows')) as HTMLElement;
         this.stack = new RowStack(FOCUS_TOP);
         this.rowsEl.appendChild(this.stack.el);
         // Over the row under the focused one: it does not slide with the rows (they slide under it)
@@ -138,6 +141,7 @@ export class ChannelView implements Screen {
         setShown(this.el, true);
         this.stack.setNarrow(false);
         this.stack.setShown(true);
+        this.keepInView();
         this.preview.start();
         // Back from what it opened (a player that played until the stream ended): asked again
         if (this.seen) {
@@ -298,9 +302,17 @@ export class ChannelView implements Screen {
     private setRows(on: boolean): void {
         this.inRows = on;
         toggleClass(this.el, 'bt-ch--rows', on);
+        this.keepInView();
         translate(this.rowsEl, 0, on ? 0 : HEADER_DROP);
         this.mark();
         this.restSoon();
+    }
+
+    /** With Keep Live Preview: the preview beside the shrunk header while focus is in the rows */
+    private keepInView(): void {
+        var keep = keepPreview();
+        toggleClass(this.el, 'bt-ch--keep', keep);
+        this.preview.raise(keep && this.inRows);
     }
 
     private mark(): void {

@@ -39,7 +39,8 @@ var ICONS: { [name: string]: string } = {
         '<circle cx="28" cy="28" r="3.2" fill="currentColor"/><circle cx="39" cy="28" r="3.2" fill="currentColor"/>'),
     cookies: duo(BAG, '<path d="M28 24v-5a8 8 0 0 1 16 0v5"/>', '<rect x="20" y="24" width="32" height="30" rx="4" fill="currentColor"/>'),
     // Bolli's own settings in the same style: a chat bubble, a smiling face, a screen with a column, one with lines in
-    // the column, one with the column half dark, a screen dark at the bottom, a raised hand, a speaker, a coin, a
+    // the column, one with the column half dark, a screen dark at the bottom, one with a small picture in its corner,
+    // a raised hand, a speaker, a coin, a
     // stack of servers, a screen, an i
     notices: duo('<path d="M12 12h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H28l-10 8v-8h-6a4 4 0 0 1-4-4V16a4 4 0 0 1 4-4Z"/>',
         '<path d="M16 8h36a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H32l-10 8v-8h-6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4Z"/>'),
@@ -49,6 +50,7 @@ var ICONS: { [name: string]: string } = {
     chatsize: duo(SCREEN, SCREEN + '<path d="M40 12v36M44 22h8M44 30h8M44 38h5"/>'),
     shade: duo(SCREEN, SCREEN + '<path d="M40 12h13a3 3 0 0 1 3 3v30a3 3 0 0 1-3 3H40Z" fill="currentColor" fill-opacity=".5"/>'),
     dim: duo(SCREEN, SCREEN + '<path d="M8 33h48v12a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3Z" fill="currentColor"/>'),
+    pip: duo(SCREEN, SCREEN + '<rect x="34" y="17" width="16" height="11" rx="1.5" fill="currentColor"/>'),
     gate: duo('<path d="' + HAND + '"/>', '<path d="' + HAND + '"/>'),
     volume: duo('<path d="' + SPEAKER + '"/>', '<path d="' + SPEAKER + '"/><path d="M42 22a12 12 0 0 1 0 20M48 15a21 21 0 0 1 0 34"/>'),
     points: duo(ROUND, ROUND + '<path d="M32 18a12 12 0 0 1 12 12"/>'),

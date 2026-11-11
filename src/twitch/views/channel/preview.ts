@@ -27,8 +27,10 @@ export var sessionPlayer: PreviewPlayer = {
     play: play, leave: leave, owns: owns, stop: stop, playingKey: playingKey, placeVideo: placeVideo
 };
 
-/** The box in 1280x720 units (1303,252 527x297 at 1920) */
+/** The box in 1280x720 units (1303,252 527x297 at 1920); raised: beside the shrunk header, above its band's end at
+ * 300 (Settings' Keep Live Preview) */
 var BOX: Box = { left: 868.67, top: 168, width: 351.33, height: 198 };
+var RAISED: Box = { left: 868.67, top: 96, width: 351.33, height: 198 };
 /** Twitch's preview is small: at most this tall */
 var OPTIONS: PlayOptions = { maxHeight: 360, muted: false, remember: false };
 
@@ -44,6 +46,8 @@ export class Preview {
     private length: HTMLElement;
     private target: Target | null = null;
     private events: SessionEvents;
+    /** The video placed beside the shrunk header (focus in the rows, Keep Live Preview on) */
+    private raised = false;
 
     /** failed: the box's playback failed (a live stream may have ended) */
     constructor(private player: PreviewPlayer, failed?: (target: Target) => void) {
@@ -114,10 +118,21 @@ export class Preview {
         if (!this.target) {
             return;
         }
-        this.player.placeVideo(BOX);
+        this.player.placeVideo(this.raised ? RAISED : BOX);
         // Claimed from the player: its picture moves already (else the box stays dark until it does)
         this.setMoving(this.player.playingKey() === this.key());
         this.player.play(this.target, this.events, OPTIONS);
+    }
+
+    /** The video beside the shrunk header (on) or in the box; moved now while the page plays in it */
+    raise(on: boolean): void {
+        if (on === this.raised) {
+            return;
+        }
+        this.raised = on;
+        if (this.target && this.player.owns(this.events)) {
+            this.player.placeVideo(on ? RAISED : BOX);
+        }
     }
 
     /** The page goes out of sight: the screen shown over it may claim the playback */

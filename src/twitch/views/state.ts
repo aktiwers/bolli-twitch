@@ -3,6 +3,12 @@
 // asked shows Try Again under it, focused while the screen has focus; OK there asks again (the screen's retry()).
 
 import { h, setShown, setText, toggleClass } from '../../core/dom.js';
+import { isOnline } from '../../core/network.js';
+import { oldEngine } from '../../core/platform.js';
+
+/** webOS TV 1.x-2.x's old engine connects with TLS 1.0 only, which every Twitch server refuses: nothing can be asked
+ * there, so a list that could not be asked while the TV is online says why */
+var OLD_ENGINE_LINE = 'This TV\'s software (webOS TV 1-2) cannot make the secure connection Twitch requires.';
 
 export class StateBox {
     el: HTMLElement;
@@ -32,6 +38,9 @@ export class StateBox {
         this.failed = failed;
         setText(this.title, title);
         this.title.style.display = title ? '' : 'none';
+        if (failed && oldEngine() && isOnline()) {
+            line = OLD_ENGINE_LINE;
+        }
         setText(this.line, line);
         this.line.style.display = line ? '' : 'none';
         this.button.style.display = failed ? '' : 'none';

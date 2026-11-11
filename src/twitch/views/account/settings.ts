@@ -12,6 +12,7 @@ import { claimsBonus, setClaimsBonus } from '../../api/points.js';
 import { setThirdPartyEmotes, thirdPartyEmotes } from '../../chat/emotes.js';
 import { extraNotices, setExtraNotices } from '../../chat/parse.js';
 import { rememberedQuality, rememberQuality, setUsher, usherPref } from '../../player/session.js';
+import { keepPreview, setKeepPreview } from '../channel/keep-preview.js';
 import { MenuMode, Navigator, Screen } from '../navigator.js';
 import { ChatSettings, chatSummary } from '../player/chat-settings.js';
 import { setStartDim, startDim } from '../player/start-dim.js';
@@ -126,7 +127,11 @@ var USHER: Setting = {
 };
 
 /** Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there) */
-var SETTINGS = [NOTICES, EMOTES, CHAT, DIM, GATE, STABLE, POINTS, USHER].filter(function (s) { return s !== STABLE || canStabilize(); });
+var PREVIEW = onOffCard('pip', 'Keep Live Preview', keepPreview, setKeepPreview,
+    'The channel page\'s preview stays in view while you browse its videos.',
+    'The channel page\'s preview hides while you browse its videos, as in Twitch\'s TV app.');
+
+var SETTINGS = [NOTICES, EMOTES, CHAT, DIM, PREVIEW, GATE, STABLE, POINTS, USHER].filter(function (s) { return s !== STABLE || canStabilize(); });
 
 /** The remembered quality as Twitch names it (1080p60, 720p), or '' for none */
 function remembered(): string {

@@ -37,6 +37,8 @@ html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; backgrou
 .bt-stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
 .bt-menu { position: absolute; left: 0; top: 62.67px; width: 1280px; height: 43.2px; z-index: 3; }
 .bt-menu-logo { position: absolute; left: 96px; top: -12px; width: 60px; height: 60px; background: url(../logo.webp) center / contain no-repeat; }
+/* webOS TV 1.x-2.x's old engine (old-engine.js marks it) decodes no WebP: a PNG copy there */
+.old-engine .bt-menu-logo { background-image: url(../logo.png); }
 .bt-menu-items { position: absolute; left: 0; top: 0; width: 1280px; text-align: center; white-space: nowrap; font-size: 0; }
 .bt-menu-item, .bt-button { display: inline-block; vertical-align: top; box-sizing: border-box; height: 43.2px; padding: 0 12px;
                             border: 2.67px solid transparent; border-radius: 7.2px; font-size: 16.8px; line-height: 37.86px; font-weight: 600; color: #dedee3; }

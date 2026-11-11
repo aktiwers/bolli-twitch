@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <title>Bolli Twitch</title>
 <script>
-  // Layout is written in 1280x720 units; draw it at the real viewport (1920x1080)
+  // Layout is written in 1280x720 units; draw it at the window the TV gives: appinfo names no resolution, so it is
+  // the TV's graphics, 1920x1080 on a 4K TV and 1280x720 on an HD or Full HD one (a 1920x1080 app there is cut off)
   document.documentElement.style.zoom = Math.max(1, window.innerWidth / 1280);
 </script>
 <link rel="stylesheet" href="themes/twitch.css">
@@ -21,6 +22,9 @@
 <div id="app"></div>
 <div id="player"></div>
 <div id="toast"></div>
+<!-- webOS TV 1.x-2.x's old engine (WebKit: webOS 3 and later name their Chrome) with its early Promise:
+     old-engine.js stands in for what it lacks there, and never anywhere else -->
+<script>if (!/Chrome\//.test(navigator.userAgent) && !(window.Promise && Promise.all && Promise.race)) { document.write('<script src="old-engine.js"><\/script>'); }</script>
 <script src="app.js"></script>
 </body>
 </html>

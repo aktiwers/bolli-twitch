@@ -234,9 +234,12 @@ export class PagedRows {
     private tilePagers: TilePager[] = [];
     /** First pages taken: a row's pager from an earlier one stays only while the row still shows its shelf */
     private firsts = 0;
+    /** The first page asked again (reload), and destroyed (a late answer is dropped) */
+    private reloading = false;
+    private gone = false;
 
     /** onPage: after each fresh page is in (first: the first one) */
-    constructor(loader: ShelfLoader, top: number, private onPage: (first: boolean, shelves: Shelf[]) => void) {
+    constructor(private loader: ShelfLoader, top: number, private onPage: (first: boolean, shelves: Shelf[]) => void) {
         this.el = h('div', 'bt-paged');
         this.stack = new RowStack(top);
         this.el.appendChild(this.stack.el);
@@ -270,12 +273,31 @@ export class PagedRows {
     }
 
     /** A first page asked again elsewhere (a refresh) in place of the rows: rows there get their shelf (in sight: once
-     * out of sight), the rest are added or cut, and the pages go on from it */
-    refresh(page: Page<Shelf>): void {
+     * out of sight, or at once with atOnce), the rest are added or cut, and the pages go on from it */
+    refresh(page: Page<Shelf>, atOnce?: boolean): void {
         this.pager.adopt(page);
         this.taken = 0;
+        this.atOnce = !!atOnce;
         this.take(page.items, true);
         this.showState();
+    }
+
+    /** The first page asked again from the loader, then in place of the rows as refresh() puts it (one ask at a time;
+     * a failed one leaves the rows as they are) */
+    reload(atOnce: boolean): void {
+        if (this.reloading || this.pager.loading) {
+            return;
+        }
+        this.reloading = true;
+        var self = this;
+        this.loader(SHELVES).then(function (page: Page<Shelf>) {
+            self.reloading = false;
+            if (!self.gone) {
+                self.refresh(page, atOnce);
+            }
+        }, function () {
+            self.reloading = false;
+        });
     }
 
     /** OK on Try Again (or the network back): true when the failed state showed. A row's failed page is asked again
@@ -295,6 +317,7 @@ export class PagedRows {
 
     /** Stops asking; late replies are dropped */
     destroy(): void {
+        this.gone = true;
         this.pager.destroy();
         for (var i = 0; i < this.tilePagers.length; i++) {
             this.tilePagers[i].pager.destroy();
