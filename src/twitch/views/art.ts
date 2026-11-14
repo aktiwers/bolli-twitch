@@ -31,6 +31,7 @@ var BAG = '<rect x="20" y="24" width="32" height="30" rx="4"/>';
 /** Two rows, one filled: the Favorites tab's row a card is about */
 var ROWS = '<rect x="10" y="12" width="44" height="14" rx="3"/><rect x="10" y="34" width="44" height="14" rx="3"/>';
 var SPEAKER = 'M10 24h10l14-11v38L20 40H10Z';
+var HOUSE = 'M10 30L32 12l22 18v20a3 3 0 0 1-3 3H13a3 3 0 0 1-3-3Z';
 var HAND = 'M19 34V17a3.5 3.5 0 0 1 7 0v10V12a3.5 3.5 0 0 1 7 0v15V14a3.5 3.5 0 0 1 7 0v14V19a3.5 3.5 0 0 1 7 0v19c0 9-6 15-15 15h-2c-6 0-9-3-12-8l-7-10a3.5 3.5 0 0 1 5.5-4l5 5';
 
 var ICONS: { [name: string]: string } = {
@@ -58,6 +59,10 @@ var ICONS: { [name: string]: string } = {
     points: duo(ROUND, ROUND + '<path d="M32 18a12 12 0 0 1 12 12"/>'),
     usher: duo('<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/>',
         '<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/><path d="M20 18h4M20 40h4"/>'),
+    history: duo('<circle cx="32" cy="32" r="21"/>', '<circle cx="32" cy="32" r="21"/><path d="M32 20v13l8 5"/>'),
+    clear: duo('<path d="M14 18h36M26 18v-5h12v5M18 18l3 33a3 3 0 0 0 3 3h16a3 3 0 0 0 3-3l3-33"/>',
+        '<path d="M14 18h36M26 18v-5h12v5M18 18l3 33a3 3 0 0 0 3 3h16a3 3 0 0 0 3-3l3-33"/><path d="M28 28v16M36 28v16"/>'),
+    start: duo('<path d="' + HOUSE + '"/>', '<path d="' + HOUSE + '"/><rect x="26" y="36" width="12" height="17" fill="currentColor"/>'),
     rowlive: duo(ROWS, ROWS + '<rect x="10" y="12" width="44" height="14" rx="3" fill="currentColor"/>'),
     rowall: duo(ROWS, ROWS + '<rect x="10" y="34" width="44" height="14" rx="3" fill="currentColor"/>'),
     quality: duo('<rect x="10" y="10" width="44" height="30" rx="3"/>', '<rect x="10" y="10" width="44" height="30" rx="3"/><path d="M24 52h16M32 40v12"/>'),

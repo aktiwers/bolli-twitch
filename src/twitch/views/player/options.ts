@@ -1,6 +1,7 @@
 // The player's options page (the options button), as Twitch's TV app has it: the top menu's Go Back alone over
 // full-width rows, Report Video (past broadcasts), Report Channel and "Not interested in this channel?"; a live
-// player's also Bolli's Live Chat Settings first, which goes back to the player and opens them over it. The reports
+// player's and a past broadcast's also Bolli's Chat Settings first, which goes back to the player and opens them over
+// it. The reports
 // open Twitch's QR pages; Not interested is Twitch's (a guest signs in first, the account is asked "Are you sure?").
 // Up from the first row goes to Go Back. The player stays under it: Back returns to it with its chat.
 
@@ -24,12 +25,12 @@ export class OptionsPage implements Screen {
     private index = 0;
     private focused = true;
 
-    /** videoId: a past broadcast's (it adds Report Video); chatSettings: a live player's, opening its chat's settings */
+    /** videoId: a past broadcast's (it adds Report Video); chatSettings: a player with chat, opening its chat's settings */
     constructor(channel: Channel, videoId: string, nav: Navigator, chatSettings?: () => void) {
         this.el = h('div', 'bt-opt');
         var list = this.el.appendChild(h('div', 'bt-opt-rows')) as HTMLElement;
         if (chatSettings) {
-            this.add(list, 'chatset', 'Live Chat Settings', 'Where the chat shows and how it looks', function () {
+            this.add(list, 'chatset', 'Chat Settings', 'Where the chat shows and how it looks', function () {
                 nav.back();
                 chatSettings();
             });

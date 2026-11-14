@@ -12,6 +12,15 @@ export function load<T>(key: string): T | null {
     }
 }
 
+/** The stored text as it is (null: none), for a caller that keeps what it parsed while the text stays the same */
+export function loadText(key: string): string | null {
+    try {
+        return window.localStorage.getItem(PREFIX + key);
+    } catch (e) {
+        return null;
+    }
+}
+
 export function save(key: string, value: unknown): void {
     try {
         window.localStorage.setItem(PREFIX + key, JSON.stringify(value));

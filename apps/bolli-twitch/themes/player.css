@@ -5,7 +5,7 @@
 
 .bt-pl { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
 .bt-pl-box { position: absolute; left: 0; top: 0; width: 960px; height: 720px; }
-.bt-pl--vod .bt-pl-box, .bt-pl--clip .bt-pl-box, .bt-pl--chatless .bt-pl-box { width: 1280px; }
+.bt-pl--clip .bt-pl-box, .bt-pl--chatless .bt-pl-box { width: 1280px; }
 /* Paused: the big play sign in the picture's middle, over the overlay's shade (also with the overlay hidden) */
 .bt-pl-play { display: none; position: absolute; left: 50%; top: 50%; z-index: 2; width: 80px; height: 80px; margin: -40px 0 0 -40px; }
 .bt-pl-play svg { display: block; width: 100%; height: 100%; }
@@ -38,7 +38,7 @@
 
 /* The channel: avatar (LIVE under it), name, title, and game | uptime | viewers (or date | views) */
 .bt-pl-info { position: absolute; left: 48px; top: 578px; height: 78px; }
-.bt-pl--vod .bt-pl-info { top: 572px; }
+.bt-pl--vod .bt-pl-info, .bt-pl--live .bt-pl-info { top: 572px; }
 .bt-pl--clip .bt-pl-info { top: 584px; }
 .bt-pl-avatar { position: absolute; left: 0; top: 0; width: 78px; height: 78px; }
 .bt-pl-avatar-img { display: block; width: 78px; height: 78px; box-sizing: border-box; border: 2.67px solid #0e0e10; border-radius: 50%; background: #0e0e10; }
@@ -48,7 +48,6 @@
 .bt-pl--vod .bt-pl-status, .bt-pl--clip .bt-pl-status { left: 36.67px; top: 84.67px; width: 0; height: 0; }
 .bt-pl-lines { position: absolute; left: 102px; top: 8px; max-width: 551.33px; white-space: nowrap; }
 .bt-pl--chatless .bt-pl-lines { max-width: 871.33px; }
-.bt-pl--vod .bt-pl-lines { max-width: 908.67px; }
 .bt-pl--clip .bt-pl-lines { max-width: 840.67px; }
 .bt-pl-name, .bt-pl-title { overflow: hidden; text-overflow: ellipsis; font-size: 16.8px; font-weight: 700; line-height: 20px; color: #efeff1; }
 .bt-pl-meta { overflow: hidden; text-overflow: ellipsis; font-size: 14.4px; line-height: 21.33px; color: #adadb8; }
@@ -64,7 +63,8 @@
 .bt-pl--avatar .bt-pl-bubble { display: block; }
 .bt-pl--avatar .bt-pl-lines { display: none; }
 
-/* The buttons at the right: Follow above the icon buttons (options, quality, chat), 320 further right without chat */
+/* The buttons at the right: Follow above the icon buttons (options, quality, chat), 320 further right without chat;
+   a past broadcast's the same, its Follow higher */
 .bt-pl-follow { position: absolute; left: 786px; top: 561.33px; }
 .bt-pl-icon { position: absolute; top: 628.67px; width: 46px; padding: 0; }
 .bt-button.bt-pl-icon { background: transparent; }
@@ -77,16 +77,17 @@
 .bt-pl--chatless .bt-pl-options { left: 1033.33px; }
 .bt-pl--chatless .bt-pl-gear { left: 1104px; }
 .bt-pl--chatless .bt-pl-chat { left: 1174px; }
-.bt-pl--vod .bt-pl-follow { left: 1106px; top: 549.33px; }
-.bt-pl--vod .bt-pl-options { left: 1104px; }
-.bt-pl--vod .bt-pl-gear { left: 1174px; }
+.bt-pl--vod .bt-pl-follow, .bt-pl--live .bt-pl-follow { top: 549.33px; }
 .bt-pl--clip .bt-pl-full { position: absolute; left: 1054.67px; top: 573.33px; }
 .bt-pl--clip .bt-pl-options { left: 1036px; }
 .bt-pl--clip .bt-pl-follow { left: 1106px; top: 628.67px; }
 
-/* The track: bar, purple part, knob with the time under it, the length at the end */
+/* The track: bar, purple part, knob with the time under it, the length at the end; beside a past broadcast's chat
+   column 320 shorter. A live stream rewound into its recording (Bolli's) has it too, laid out as a past broadcast */
 .bt-pl-track { position: absolute; left: 48px; top: 483.33px; width: 1184px; height: 24px; display: -webkit-flex; display: flex;
                -webkit-align-items: center; align-items: center; }
+.bt-pl--vod .bt-pl-track, .bt-pl--live .bt-pl-track { width: 864px; }
+.bt-pl--vod.bt-pl--chatless .bt-pl-track, .bt-pl--live.bt-pl--chatless .bt-pl-track { width: 1184px; }
 .bt-pl--clip .bt-pl-track { top: 507.33px; }
 /* A clip whose broadcast Twitch no longer has: no Watch Full Video, the track lower and the info and buttons where
    Twitch's app has them then */
@@ -108,7 +109,6 @@
                  box-shadow: 0 2.67px 5.33px rgba(0, 0, 0, .4), 0 0 2.67px rgba(0, 0, 0, .4); white-space: nowrap;
                  -webkit-transform: translateX(-50%); transform: translateX(-50%); }
 .bt-pl--chatless .bt-pl-quality { left: 1127px; }
-.bt-pl--vod .bt-pl-quality { left: 1197px; }
 .bt-pl-quality-item { position: relative; min-width: 103.33px; height: 43.33px; box-sizing: border-box; padding: 0 22px; border: 2.67px solid transparent;
                       border-radius: 7.2px; font-size: 16.8px; font-weight: 600; line-height: 38px; text-align: center; color: #dedee3; }
 .bt-pl-quality-item.bt-focused { background: #fff; border-color: #0e0e10; box-shadow: 0 0 0 3px #772ce8; color: #1f1f23; }

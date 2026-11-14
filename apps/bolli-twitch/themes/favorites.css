@@ -4,6 +4,8 @@
 /* The tab: rows as Home's with the focused row's title at y 132, right under the menu; the page colour behind the
    menu covers the rows that slid up */
 .bt-fav { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
+/* The History page (views/history.ts): Favorites' rows and band, without the grid */
+.bt-hist { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
 .bt-fav-band { position: absolute; left: 0; top: 0; width: 1280px; height: 126px; z-index: 1; background: #0e0e10; }
 /* Latest Broadcasts: a grid under the rows (four a row, as a category's channels), its title where a row has its own;
    with focus in it the rows above slide away with its rows */

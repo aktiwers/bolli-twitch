@@ -15,7 +15,7 @@ import { onAccountChange } from './auth.js';
 import { Favorite, FavoriteChange, favoriteCount, favorites, isFavorite, noteFavorites, onFavoritesChange } from './favorites.js';
 import { gql } from './gql.js';
 import { Listeners } from './listeners.js';
-import { GAME_FIELDS, GATE_FIELDS, HISTORY_FIELDS, LIVE_CHANNEL, Raw, VIDEO_PICTURE, addShelf, nodes, oneReply, parseAll, toLive, toOfflineItem,
+import { GAME_FIELDS, GATE_FIELDS, HISTORY_FIELDS, LIVE_CHANNEL, Raw, VIDEO_PICTURE, addShelf, lastCursor, nodes, oneReply, parseAll, toLive, toOfflineItem,
     toVideo } from './parse.js';
 import { isChannel, isGame, isStream, isText, isVideo } from './shapes.js';
 import { Channel, Game, Item, Shelf, Stream, Video } from './types.js';
@@ -37,8 +37,10 @@ var PAUSE_MS = 300;
 /** A page of a channel's past broadcasts, the newest first, with each one's cursor and whether more follow */
 export var VIDEOS_PAGE = 'edges { cursor node { ' + VIDEO_PICTURE + ' ' + HISTORY_FIELDS + ' ' + GATE_FIELDS + ' } } pageInfo { hasNextPage }';
 
-var QUERY = 'query Favorites($ids: [ID!], $videos: Int!, $me: Boolean!) { users(ids: $ids) { ' + LIVE_CHANNEL +
-    ' lastBroadcast { startedAt game { ' + GAME_FIELDS + ' } }' +
+/** A channel's live state as toFavoriteStates reads it: live with its stream, else when it was last live and what */
+export var STATE_FIELDS = LIVE_CHANNEL + ' lastBroadcast { startedAt game { ' + GAME_FIELDS + ' } }';
+
+var QUERY = 'query Favorites($ids: [ID!], $videos: Int!, $me: Boolean!) { users(ids: $ids) { ' + STATE_FIELDS +
     ' videos(first: $videos, type: ARCHIVE, sort: TIME) { ' + VIDEOS_PAGE + ' } } }';
 
 /** What Twitch last said about one favorite */
@@ -375,18 +377,11 @@ function toState(u: Raw): FavoriteState | null {
     if (offline.lastGame) {
         state.lastGame = offline.lastGame;
     }
-    var more = videosNext(u.videos);
+    var more = lastCursor(u.videos);
     if (more) {
         state.more = more;
     }
     return state;
-}
-
-/** The cursor a page of past broadcasts (VIDEOS_PAGE) goes on from: its last one's, while Twitch says more follow */
-export function videosNext(page: Raw): string | undefined {
-    var edges = page && page.edges;
-    var last = edges && edges.length ? edges[edges.length - 1] : null;
-    return page && page.pageInfo && page.pageInfo.hasNextPage && last && last.cursor ? String(last.cursor) : undefined;
 }
 
 /** The past broadcasts of all these channels as one list, the newest first, at most max */
@@ -411,7 +406,7 @@ export function latestVideos(known: { videos: Video[] }[], max: number): Video[]
 
 /** A favorite's tile in All Favorites: live with what it plays, else when it was last live and what it played; one
  * Twitch has not answered for yet draws from the list (offline, no line) */
-function favoriteItem(f: Favorite, state: FavoriteState | undefined): Item {
+export function favoriteItem(f: Favorite, state: FavoriteState | undefined): Item {
     if (!state) {
         return { kind: 'channel', channel: { id: f.id, login: f.login, displayName: f.displayName, avatar: f.avatar }, live: false };
     }

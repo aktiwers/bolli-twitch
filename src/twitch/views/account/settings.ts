@@ -1,4 +1,5 @@
-// Settings in the cards of Twitch's TV app, in groups under headings: Your Profile alone at the top, then Playback
+// Settings in the cards of Twitch's TV app, in groups under headings: Your Profile alone at the top, then General (the
+// page the app opens on, Watch History's place), then Playback
 // (the remembered quality, Stable Volume on Android, the start dim, the stream request version, the channel page's
 // preview, the mature content warning), Chat (live chat's settings page over an example, gift and raid notices, the
 // channel points' bonus), Favorites (the tab's two rows and its previews), Twitch (its four QR pages), and last, set a
@@ -19,6 +20,11 @@ import { setShowsAllRow, setShowsLiveRow, showsAllRow, showsLiveRow } from '../f
 import { MenuMode, Navigator, Screen } from '../navigator.js';
 import { ChatSettings, chatSummary } from '../player/chat-settings.js';
 import { setStartDim, startDim } from '../player/start-dim.js';
+import { setStartPage, START_PAGES, startPage } from '../start-page.js';
+import { LABELS, MenuItem } from '../menu.js';
+import { clearHistory, HISTORY_MODES, HistoryMode, historyMode, setHistoryMode, watched } from '../../api/history.js';
+import { Confirm } from '../confirm.js';
+import { holdOk } from '../held-ok.js';
 import { setSkipsGate, skipsGate } from '../player/gate.js';
 import { canStabilize, setStableVolume, stableVolume } from '../../player/stable-volume.js';
 import { loadQr, QrPage, SETTINGS_PAGES } from '../qr.js';
@@ -94,6 +100,35 @@ var CHAT: Setting = {
 var DIM = onOffCard('dim', 'Start Dim', startDim, setStartDim,
     'A player opens with its info over a dimmed picture for a moment, as in Twitch\'s TV app.',
     'A player opens on a clear picture; keys act at once and show its info.');
+
+var START: Setting = {
+    icon: 'start',
+    title: 'Start Page',
+    values: START_PAGES,
+    now: startPage,
+    set: function (v) { setStartPage(v as MenuItem); },
+    label: function (v) { return LABELS[v]; },
+    line: function (v) {
+        return v === 'home' ? 'The app opens on Home, as Twitch\'s TV app does.' :
+            'The app opens on ' + LABELS[v] + (v === 'following' ? ' (on Home when signed out).' :
+                v === 'history' ? ' (on Home unless Watch History has its own page).' : '.');
+    }
+};
+
+/** Watch History (api/history.ts): a row at the top of Favorites, a page of its own in the menu, or not shown (still kept) */
+var HISTORY: Setting = {
+    icon: 'history',
+    title: 'Watch History',
+    values: HISTORY_MODES,
+    now: historyMode,
+    set: function (v) { setHistoryMode(v as HistoryMode); },
+    label: function (v) { return v === 'favorites' ? 'In Favorites' : v === 'page' ? 'Own Page' : 'Off'; },
+    line: function (v) {
+        return v === 'favorites' ? 'What you watched, newest first, in a Continue Watching row at the top of Favorites.' :
+            v === 'page' ? 'What you watched, newest first, on a History page in the menu, after Home.' :
+            'History is not shown, but still kept: it is all there when you show it again.';
+    }
+};
 
 var GATE: Setting = {
     icon: 'gate',
@@ -171,6 +206,8 @@ interface Entry {
     setting?: Setting;
     open?: string;
     quality?: boolean;
+    /** Clear History: OK asks first */
+    clear?: boolean;
 }
 
 export class SettingsView implements Screen {
@@ -185,6 +222,8 @@ export class SettingsView implements Screen {
     /** The Remembered Quality card and the Version card */
     private quality = -1;
     private version = -1;
+    private clear = -1;
+    private confirm = new Confirm();
     /** The live chat settings page, once opened */
     private chatPage: ChatSettings | null = null;
 
@@ -192,6 +231,9 @@ export class SettingsView implements Screen {
         this.el = h('div', 'bt-settings');
         this.cards = new CardList(TOP);
         this.add(PROFILE, { open: 'profile' });
+        this.group('General', [START, HISTORY]);
+        this.clear = this.cards.length;
+        this.add({ icon: 'clear', title: 'Clear History', line: '' }, { clear: true });
         this.quality = this.cards.length;
         this.add({ icon: 'quality', title: 'Remembered Quality', line: '', heading: 'Playback' }, { quality: true });
         // Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there)
@@ -212,6 +254,7 @@ export class SettingsView implements Screen {
         this.add({ icon: 'version', title: 'Version', line: '', heading: apart || undefined }, {});
         this.el.appendChild(this.cards.el);
         this.el.appendChild(h('div', 'bt-set-cover'));
+        this.el.appendChild(this.confirm.el);
         setShown(this.el, false);
         this.label();
     }
@@ -231,7 +274,7 @@ export class SettingsView implements Screen {
     }
 
     atTop(): boolean {
-        return this.cards.index === 0 && !(this.chatPage && this.chatPage.shown);
+        return this.cards.index === 0 && !(this.chatPage && this.chatPage.shown) && !this.confirm.open;
     }
 
     setFocused(focused: boolean): void {
@@ -239,6 +282,9 @@ export class SettingsView implements Screen {
     }
 
     onKey(code: number): boolean {
+        if (this.confirm.open) {
+            return this.confirm.onKey(code);
+        }
         if (this.chatPage && this.chatPage.shown) {
             this.chatPage.onKey(code);
             if (!this.chatPage.shown) {
@@ -272,6 +318,17 @@ export class SettingsView implements Screen {
             this.nav.push(entry.open === 'profile' ? new ProfileView(this.nav) : new QrPage(SETTINGS_PAGES[entry.open], this.nav));
         } else if (setting) {
             this.step(setting, 1);
+        } else if (entry.clear && watched().length) {
+            var self = this;
+            this.confirm.ask('Clear Watch History?', 'Everything you watched is taken out of History. Past broadcasts still resume where you stopped.',
+                'No, cancel', 'Yes, clear', function (yes: boolean) {
+                    if (yes) {
+                        clearHistory();
+                    }
+                    self.label();
+                });
+            // (OK still down: its repeats are not the box's)
+            holdOk();
         } else if (entry.quality && remembered()) {
             rememberQuality(null);
             this.label();
@@ -310,6 +367,9 @@ export class SettingsView implements Screen {
                 this.cards.update(k, s.title, s.line(v), s.label(v));
             }
         }
+        var n = watched().length;
+        this.cards.update(this.clear, 'Clear History', n ? 'Takes everything out of Watch History (' + n + (n === 1 ? ' item' : ' items') +
+            '). OK asks first.' : 'Watch History is empty.', '');
         var q = remembered();
         this.cards.update(this.quality, 'Remembered Quality', q ? 'New streams start at ' + q + '. OK forgets it: they start at Auto.' :
             'New streams start at Auto: no quality is remembered.', q || 'Auto');

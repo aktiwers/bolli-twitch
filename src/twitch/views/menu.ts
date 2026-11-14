@@ -1,6 +1,7 @@
 // The top menu of every page, as Twitch's TV app has it: the logo at the left (the Bolli logo here, not focusable),
 // the items centred (a guest: Sign In, Home, Browse, Search; signed in: Home, Following, Browse, Search) and the gear
-// (Settings) at the right; Bolli's Favorites stands after Home for both. The current page's item is lit; focus is the
+// (Settings) at the right; Bolli's Favorites stands after Home for both, and with Watch History on its own page
+// Bolli's History before it. The current page's item is lit; focus is the
 // light box with the purple ring. Left/Right walk the items without wrapping; OK picks one; Down leaves the menu (the
 // shell gives focus back to the page). On a page opened over a section, Go Back stands in place of the logo as the
 // first item focus reaches (Up from the page lands on it); a page such as Settings shows Go Back alone, without the
@@ -12,16 +13,22 @@ import { chevronIcon, gearIcon } from './icons.js';
 import { MenuMode } from './navigator.js';
 import { REST_LONG_MS } from './rest.js';
 
-export type MenuItem = 'signin' | 'home' | 'favorites' | 'following' | 'browse' | 'search' | 'settings';
+export type MenuItem = 'signin' | 'home' | 'history' | 'favorites' | 'following' | 'browse' | 'search' | 'settings';
 /** What focus walks: Go Back, then the items */
 type Entry = MenuItem | 'back';
 
 /** The items' words, in the order they stand */
-var LABELS: { [name: string]: string } = {
-    signin: 'Sign In', home: 'Home', favorites: 'Favorites', following: 'Following', browse: 'Browse', search: 'Search'
+export var LABELS: { [name: string]: string } = {
+    signin: 'Sign In', home: 'Home', history: 'History', favorites: 'Favorites', following: 'Following', browse: 'Browse', search: 'Search'
 };
 var GUEST: MenuItem[] = ['signin', 'home', 'favorites', 'browse', 'search', 'settings'];
 var SIGNED_IN: MenuItem[] = ['home', 'favorites', 'following', 'browse', 'search', 'settings'];
+
+/** An order with History after Home */
+export function withHistory(order: MenuItem[]): MenuItem[] {
+    var at = order.indexOf('home') + 1;
+    return order.slice(0, at).concat(['history' as MenuItem], order.slice(at));
+}
 
 export class TopMenu {
     el: HTMLElement;
@@ -29,6 +36,8 @@ export class TopMenu {
     private logo: HTMLElement;
     private items: HTMLElement;
     private signedIn = false;
+    /** History has an item (Watch History on its own page) */
+    private history = false;
     /** Go Back shown, and shown without the items */
     private back = false;
     private alone = false;
@@ -53,13 +62,23 @@ export class TopMenu {
         var gear = this.el.appendChild(h('div', 'bt-menu-item bt-menu-gear')) as HTMLElement;
         gear.appendChild(gearIcon());
         this.els.settings = gear;
+        this.els.history.style.display = 'none';
         this.setSignedIn(false);
         this.setCurrent('home');
     }
 
     /** The items in order (focus walks them) */
     get order(): MenuItem[] {
-        return this.signedIn ? SIGNED_IN : GUEST;
+        var order = this.signedIn ? SIGNED_IN : GUEST;
+        return this.history ? withHistory(order) : order;
+    }
+
+    /** History's item shown (after Home) or not; focus stays on its item, on History's place when it goes */
+    setHistory(on: boolean): void {
+        var at = this.entries()[this.index];
+        this.history = on;
+        this.els.history.style.display = on ? '' : 'none';
+        this.keep(at);
     }
 
     get hasFocus(): boolean {

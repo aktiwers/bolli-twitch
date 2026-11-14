@@ -7,7 +7,8 @@
 // it is held, then the release: the repeats are not looked at). A timer that runs late had the page busy, so the
 // release may have come in time and wait behind it: it gets a moment more to be heard first. Another key while OK is
 // down, or the app hiding, drops the press. The menu's choices change the favorites at once and say so (star.ts); Go
-// to channel opens the channel's page; Move hands the tile to the Favorites tab to carry it along its row. The menu belongs to the screen it opened over: another screen taking the top
+// to channel opens the channel's page; Move hands the tile to the Favorites tab to carry it along its row; Remove from
+// History takes what the tile stands for out of Watch History. The menu belongs to the screen it opened over: another screen taking the top
 // without a key (a relaunch naming a channel, the account changing) closes it (settled).
 
 import { KEY } from '../../../core/keys.js';
@@ -17,9 +18,11 @@ import { holdOk, okHeld, OkWatcher } from '../held-ok.js';
 import { Screen } from '../navigator.js';
 import { ChannelMenu, MenuChoice } from './menu.js';
 import { setFavorite } from './star.js';
+import { forgetWatched } from '../../api/history.js';
 
-/** OK down this long is held (the remotes' own delay before the first repeat is about the same) */
-export var HOLD_MS = 500;
+/** OK down this long is held: Android's own long press (its first repeat comes then, and a press held that long is
+ * a long one there) */
+export var HOLD_MS = 400;
 /** A timer run later than this had the page busy; also how long a release that waits behind it is then given */
 export var LATE_MS = 50;
 /** How many times running late gives a waiting release that chance, before held counts anyway */
@@ -41,6 +44,8 @@ export interface HoldDeps {
     canMove(id: string): boolean;
     /** Starts that */
     move(id: string): void;
+    /** The Watch History entry the tile stands for on the screen on top ('' none) */
+    historyKey?(item: Item): string;
 }
 
 /** The channel a tile stands for; null for a category and for a channel without its id or login */
@@ -60,6 +65,8 @@ export class TileHold implements OkWatcher {
     private channel: Channel | null = null;
     private live = false;
     private over: Screen | null = null;
+    /** The Watch History entry the tile stands for ('' none) */
+    private history = '';
 
     constructor(private deps: HoldDeps) {
         var self = this;
@@ -177,6 +184,10 @@ export class TileHold implements OkWatcher {
                 offered.push('front');
             }
         }
+        this.history = this.deps.historyKey ? this.deps.historyKey(item) : '';
+        if (this.history) {
+            offered.push('forget');
+        }
         this.menu.show(channel.displayName, offered);
     }
 
@@ -190,7 +201,9 @@ export class TileHold implements OkWatcher {
             this.deps.move(channel.id);
             return;
         }
-        if (choice === 'front') {
+        if (choice === 'forget') {
+            forgetWatched(this.history);
+        } else if (choice === 'front') {
             favoriteToFront(channel.id);
         } else {
             setFavorite(channel, choice === 'add');

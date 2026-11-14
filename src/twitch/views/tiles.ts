@@ -6,7 +6,9 @@
 // Favorites tab has cards of its own: a favorite as a round avatar, in a red ring with LIVE while it is live and grey
 // when not, and a past broadcast with its channel's avatar and name (its row mixes channels); while a favorite is moved
 // in Live Now, the offline ones stand there as ghosts (a stream tile's size, greyed, the avatar in the picture's place,
-// Offline). A tile is built once;
+// Offline). A past broadcast part watched (on this TV, or by the account on Twitch) shows how far along a bar at the
+// bottom of its picture and the time left in place of its length; a tile draws that again when the positions kept
+// have changed since, once its pictures are asked or focus lands on it. A tile is built once;
 // set() gives it another item of its kind, so a row keeps its tiles when fresh data comes. Pictures are asked only
 // while the row wants them (pictures()).
 
@@ -14,6 +16,7 @@ import { h, px, setShown, setText, toggleClass } from '../../core/dom.js';
 import { clock } from '../../core/time.js';
 import { avatarAt } from '../api/pictures.js';
 import { Channel, Game, Item, Stream, Video } from '../api/types.js';
+import { resumeVersion, watchedPart } from './player/resume.js';
 
 /** What a kind of tile is made of and shows */
 interface Kind {
@@ -28,12 +31,15 @@ interface Kind {
     mark: string;
     /** Lines under the title */
     lines: number;
-    /** The title, the lines, then the count and the length where the kind has them */
-    texts(item: Item): string[];
+    /** The title, the lines, then the count and the length where the kind has them (watched: the part watched, where
+     * the kind has it) */
+    texts(item: Item, watched: number): string[];
     /** The picture and the small one */
     pictures(item: Item): string[];
     /** Whether the tile is marked live now (bt-tile--live), where the kind's items can be either */
     liveNow?(item: Item): boolean;
+    /** How much of it was watched (0 to 1), where the kind's items can have been */
+    watched?(item: Item): number;
 }
 
 type StreamItem = Extract<Item, { kind: 'stream' }>;
@@ -69,10 +75,11 @@ var GAME: Kind = {
 /** Past broadcasts and clips: Twitch draws them alike */
 var VIDEO: Kind = {
     width: WIDE, cls: 'bt-tile', live: false, stat: true, length: true, mark: 'bt-tile-art', lines: 2,
-    texts: function (item: Item): string[] {
+    texts: function (item: Item, watched: number): string[] {
         var v = videoOf(item);
-        return [v.title, ago(v.at), gameName(v.game), count(v.views, 1, 'view'), clock(v.seconds)];
+        return [v.title, ago(v.at), gameName(v.game), count(v.views, 1, 'view'), lengthText(v.seconds, watched)];
     },
+    watched: watchedOf,
     pictures: function (item: Item): string[] {
         var v = videoOf(item);
         // Twitch shows the box art 72x96 here: the tile's 138x184 fits
@@ -135,10 +142,11 @@ var FAVORITE_CHANNEL: Kind = {
 /** A favorite's past broadcast: a video tile with the channel's avatar and name in place of the category's */
 var FAVORITE_VIDEO: Kind = {
     width: WIDE, cls: 'bt-tile', live: false, stat: true, length: true, mark: 'bt-tile-avatar', lines: 2,
-    texts: function (item: Item): string[] {
+    texts: function (item: Item, watched: number): string[] {
         var v = (item as VideoItem).video;
-        return [v.title, v.channel.displayName, ago(v.publishedAt), count(v.views, 1, 'view'), clock(v.lengthSeconds)];
+        return [v.title, v.channel.displayName, ago(v.publishedAt), count(v.views, 1, 'view'), lengthText(v.lengthSeconds, watched)];
     },
+    watched: watchedOf,
     pictures: function (item: Item): string[] {
         var v = (item as VideoItem).video;
         return [v.preview, v.channel.avatar];
@@ -193,6 +201,19 @@ export function videoItem(video: Video): Item {
 /** The width an item's tile takes in a row */
 export function tileWidth(item: Item, card?: ChannelCard): number {
     return kindOf(item, card).width;
+}
+
+/** The watched bar's least filled part, so any part watched shows (5 min of 8 h is 1 %: 3 px of a tile) */
+var BAR_MIN = 0.04;
+
+/** A past broadcast's watched part (a clip's: none) */
+function watchedOf(item: Item): number {
+    return item.kind === 'video' ? watchedPart(item.video) : 0;
+}
+
+/** The length, or with part of it watched the time left */
+function lengthText(seconds: number, watched: number): string {
+    return watched > 0 ? clock(Math.round(seconds * (1 - watched))) + ' left' : clock(seconds);
 }
 
 function gameName(game?: Game): string {
@@ -258,6 +279,9 @@ export class Tile {
     /** The item changed since its pictures were set */
     private stale = false;
     private shown = true;
+    /** The watched bar's filled part, and the positions' version it was drawn at */
+    private watchedFill: HTMLElement | null = null;
+    private drawnAt = -1;
 
     /** card: the card for an offline channel (wide when not given) */
     constructor(item: Item, card?: ChannelCard) {
@@ -284,6 +308,9 @@ export class Tile {
         if (kind.length) {
             this.texts.push(lift.appendChild(h('div', 'bt-stat bt-stat--end')) as HTMLElement);
         }
+        if (kind.watched) {
+            this.watchedFill = lift.appendChild(h('div', 'bt-tile-bar')).appendChild(h('div', 'bt-tile-bar-fill')) as HTMLElement;
+        }
         this.fill();
     }
 
@@ -301,6 +328,9 @@ export class Tile {
 
     /** Asks the pictures (true) or lets them go (false; they come back from the cache) */
     pictures(on: boolean): void {
+        if (on) {
+            this.redrawWatched();
+        }
         if (on === this.wanted && !(on && this.stale)) {
             return;
         }
@@ -327,16 +357,35 @@ export class Tile {
     }
 
     setFocused(on: boolean): void {
+        if (on) {
+            this.redrawWatched();
+        }
         toggleClass(this.el, 'bt-tile--focused', on);
     }
 
+    /** Drawn again where the positions kept changed since (a video watched meanwhile) */
+    private redrawWatched(): void {
+        if (this.watchedFill && this.drawnAt !== resumeVersion()) {
+            this.fill();
+        }
+    }
+
     private fill(): void {
-        var texts = this.kind.texts(this.item);
+        // (looked up once: the bar and the time left both take it)
+        var part = this.watchedFill && this.kind.watched ? this.kind.watched(this.item) : 0;
+        var texts = this.kind.texts(this.item, part);
         for (var i = 0; i < this.texts.length; i++) {
             setText(this.texts[i], texts[i] || '');
         }
         if (this.kind.liveNow) {
             toggleClass(this.el, 'bt-tile--live', this.kind.liveNow(this.item));
+        }
+        if (this.watchedFill) {
+            // (after the look: one that read a changed list counted it)
+            this.drawnAt = resumeVersion();
+            toggleClass(this.el, 'bt-tile--watched', part > 0);
+            // (a few minutes of a long broadcast still shows: at least BAR_MIN of the bar)
+            this.watchedFill.style.webkitTransform = 'scaleX(' + (part > 0 ? Math.max(part, BAR_MIN) : 0) + ')';
         }
     }
 }

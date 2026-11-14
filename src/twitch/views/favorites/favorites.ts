@@ -1,5 +1,7 @@
 // Bolli's Favorites tab, between Home and Following: the channels kept as favorites on the device (api/favorites.ts)
-// in rows as Home's, right under the menu with the next row whole below: Live Now (the favorites that are live, as
+// in rows as Home's, right under the menu with the next row whole below: first, with Watch History in Favorites,
+// Continue Watching (views/history.ts: what was watched, the newest first; its live states asked when the tab shows),
+// then Live Now (the favorites that are live, as
 // stream tiles) and All Favorites (every one as a round avatar: in a red ring with LIVE while live, grey with when it
 // was last live when not; OK opens its page). Under them Latest Broadcasts, their past broadcasts merged, the newest
 // first (api/favorites-latest.ts), as a grid of four a row that goes down as far as the viewer does: Down from the
@@ -45,6 +47,9 @@ import { StateBox } from '../state.js';
 import { videoItem } from '../tiles.js';
 import { PreviewPlayer, sessionPlayer } from '../channel/preview.js';
 import { favoritePreviews, GridPreview, pictureBox } from './grid-preview.js';
+import { historyMode, onHistory, onHistoryMode, refreshHistory } from '../../api/history.js';
+import { continueRow, historyKeyOf } from '../history.js';
+import { resumeIdsVersion } from '../player/resume.js';
 import { showsAllRow, showsLiveRow } from './rows-shown.js';
 
 /** The focused row's title, under the menu */
@@ -89,6 +94,9 @@ export class FavoritesView implements Screen {
     private touched = false;
     /** The rows Settings let it show, as last drawn */
     private rowsShown = '';
+    /** The videos kept (resumeIdsVersion) the rows were drawn with; the history changed out of sight since */
+    private drawnResume = -1;
+    private historyStale = false;
     /** Focus resting on a tile: what it opens fetched ahead */
     private rest = new Rest();
     /** The focused past broadcast playing in its tile */
@@ -135,6 +143,27 @@ export class FavoritesView implements Screen {
         this.unlisten.push(onLatest(function () {
             self.fill(false);
         }));
+        // (at once also in sight: a channel's tile turning live, or the list itself, is what the viewer came for; it
+        // changes while the tab shows only with Twitch's answer, right after it shows. Out of sight, under a player:
+        // drawn as it shows)
+        this.unlisten.push(onHistory(function () {
+            if (historyMode() !== 'favorites') {
+                return;
+            }
+            if (self.shown) {
+                self.draw(true);
+            } else {
+                self.historyStale = true;
+            }
+        }));
+        // (Settings over it: like its other rows, drawn anew with focus at the top when it shows)
+        this.unlisten.push(onHistoryMode(function () {
+            if (self.shown) {
+                self.draw(true);
+            } else {
+                self.rowsShown = '';
+            }
+        }));
         this.unlisten.push(onFavoriteStates(function () {
             self.draw(!self.shown || self.partial || favoritesLoaded() !== self.drawnLoaded || answerAge(self.drawnAt) > IN_SIGHT_MS);
         }));
@@ -154,6 +183,12 @@ export class FavoritesView implements Screen {
     }
 
     show(): void {
+        if (historyMode() === 'favorites' && rowsShown() === this.rowsShown && (this.historyStale || resumeIdsVersion() !== this.drawnResume)) {
+            // Still out of sight, so the rows take it at once: the history changed, or a past broadcast watched
+            // meanwhile has nothing left to continue (rows Settings changed are drawn anew below). Only then: a draw
+            // costs ~90 ms on the TV
+            this.draw(false);
+        }
         this.shown = true;
         setShown(this.el, true);
         this.stack.setNarrow(false);
@@ -165,6 +200,9 @@ export class FavoritesView implements Screen {
         }
         this.holdGrid();
         refreshFavorites();
+        if (historyMode() === 'favorites') {
+            refreshHistory();
+        }
     }
 
     /** Settings changed the rows shown: drawn anew, focus on the first row (or the grid's first tile without rows) */
@@ -263,6 +301,12 @@ export class FavoritesView implements Screen {
         }
         this.touched = this.touched || used;
         return used;
+    }
+
+    /** On Continue Watching: the Watch History entry the tile stands for */
+    historyKey(item: Item): string {
+        var row = this.stack.row;
+        return !this.inGrid && row && row.shelf.id === 'history' ? historyKeyOf(item) : '';
     }
 
     /** Move can start on this favorite: focus is on its tile in Live Now or All Favorites, and there is another to
@@ -493,9 +537,15 @@ export class FavoritesView implements Screen {
             return;
         }
         this.rowsShown = rowsShown();
+        this.drawnResume = resumeIdsVersion();
+        this.historyStale = false;
         var shelves = favoriteShelves(favorites(), favoriteStates()).filter(function (s) {
             return s.id === 'favorites-live' ? showsLiveRow() : s.id === 'favorites-all' ? showsAllRow() : true;
         });
+        var history = historyMode() === 'favorites' ? continueRow() : null;
+        if (history) {
+            shelves.unshift(history);
+        }
         if (atOnce || !sameRows(shelves, this.shelves)) {
             this.rebuild(shelves);
         } else {
@@ -509,7 +559,7 @@ export class FavoritesView implements Screen {
         this.partial = !favoritesAnswered();
         seedLatest(favorites(), favoriteStates());
         this.fill(atOnce);
-        if (favorites().length) {
+        if (favorites().length || shelves.length) {
             this.state.hide();
         } else {
             this.state.show('No favorites yet', 'Hold OK on a channel, or use the star on its page.', false);

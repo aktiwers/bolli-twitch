@@ -1,5 +1,6 @@
 // Chat shown or hidden in the live player, as the viewer last left it with the chat button: Twitch's TV app keeps
-// that choice across runs and opens every live player the same way. Hidden, the video is full width and the chat is
+// that choice across runs and opens every live player the same way (and Bolli every past broadcast's player, whose
+// chat is replayed with the video: the same settings). Hidden, the video is full width and the chat is
 // not joined until the chat button shows it (less work and memory on the TV while nobody reads it). Where it shows
 // and how it looks are Bolli settings (the live chat settings page: chat-settings.ts):
 // beside the video (a column at the right, Twitch's own, or at the left, with its Join band; a strip along the bottom
@@ -41,6 +42,8 @@ var EMOTE_PX = 28.8;
 /** Where the player's controls start (its Follow button's top, themes/player.css): chat over the video or along a
  * strip is kept ABOVE_CONTROLS above them while they show */
 var CONTROLS_TOP = 561;
+/** With the overlay up the controls start at the track (every player has one; themes/player.css) */
+var TRACK_TOP = 483;
 var ABOVE_CONTROLS = 16;
 /** Over the video (layout units): its distance from the screen's edges, the tall and half heights' tops and the tall
  * one's bottom (above the controls, so it stays put when they show), and a box of its own's least size */
@@ -154,10 +157,10 @@ export function fitted(b: Box): Box {
     };
 }
 
-/** A box kept above the player's controls: moved up as much as it needs, or where that would take it off the screen
- * (a column the whole height), shorter instead */
+/** A box kept above the player's controls (from its track): moved up as much as it needs, or where that would take it
+ * off the screen (a column the whole height), shorter instead */
 export function lifted(b: Box): Box {
-    var by = Math.max(0, b.top + b.height + ABOVE_CONTROLS - CONTROLS_TOP);
+    var by = Math.max(0, b.top + b.height + ABOVE_CONTROLS - TRACK_TOP);
     if (!by) {
         return b;
     }

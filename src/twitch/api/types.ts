@@ -61,6 +61,14 @@ export interface LiveUpdate {
     startedAt?: string;
     /** The category now: its names only (no box art) */
     game?: { id: string; name: string; displayName: string };
+    /** The past broadcast recording it as it goes (none: the channel keeps none), and when that began */
+    archive?: Recording;
+}
+
+/** The past broadcast recording a live stream as it goes, and when that began */
+export interface Recording {
+    id: string;
+    createdAt: string;
 }
 
 export interface Video {

@@ -188,7 +188,7 @@ export class ChatSettings {
             }
         }
         this.panel = this.el.appendChild(h('div', 'bt-chatset-panel')) as HTMLElement;
-        this.panel.appendChild(h('div', 'bt-chatset-title', 'Live Chat Settings'));
+        this.panel.appendChild(h('div', 'bt-chatset-title', 'Chat Settings'));
         this.settings.forEach(function (s) {
             var el = self.panel.appendChild(h('div', 'bt-chatset-row')) as HTMLElement;
             el.appendChild(h('span', 'bt-chatset-label', s.label));

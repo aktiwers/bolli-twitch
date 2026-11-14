@@ -24,7 +24,7 @@ import { h, setShown } from '../core/dom.js';
 import { digit, initKeys, KEY, setActive } from '../core/keys.js';
 import { isOnline, onNetwork, watchNetwork } from '../core/network.js';
 import { initPerf, mark } from '../core/perf.js';
-import { ignorePointer } from '../core/platform.js';
+import { android, exitApp, ignorePointer } from '../core/platform.js';
 import { initScreenSaver } from '../core/screensaver.js';
 import { toast } from '../ui/toast.js';
 import { initAuth, onAccountChange } from './api/auth.js';
@@ -52,16 +52,20 @@ import { SearchView } from './views/browse/search.js';
 import { ChannelView } from './views/channel/channel.js';
 import { askPage, prefetchChannel } from './views/channel/data.js';
 import { sessionPlayer } from './views/channel/preview.js';
+import { Confirm } from './views/confirm.js';
 import { FavoritesView } from './views/favorites/favorites.js';
 import { TileHold } from './views/favorites/hold.js';
 import { HeldOk } from './views/held-ok.js';
 import { HomeView } from './views/home.js';
-import { MenuItem, TopMenu } from './views/menu.js';
+import { MenuItem, TopMenu, withHistory } from './views/menu.js';
 import { ErrorKind, Navigator, Screen } from './views/navigator.js';
 import { initOffline } from './views/offline.js';
 import { openPlayer, playAhead, prefetchClip } from './views/player/open.js';
 import { startOf } from './views/player/resume.js';
 import { setRestMs } from './views/rest.js';
+import { startPage } from './views/start-page.js';
+import { HistoryView } from './views/history.js';
+import { historyMode, onHistoryMode } from './api/history.js';
 import './player/test-hook.js';
 
 // The version (written in by tools/build_app.mjs: appinfo.json's), on the page for checks, Settings and the version
@@ -98,6 +102,9 @@ var screens: { [item: string]: (nav: Navigator) => Screen } = {
     },
     search: function (nav: Navigator): Screen {
         return new SearchView(nav);
+    },
+    history: function (nav: Navigator): Screen {
+        return new HistoryView(nav);
     }
 };
 
@@ -203,6 +210,10 @@ var tileHold = new TileHold({
         if (tab) {
             tab.startMove(id);
         }
+    },
+    historyKey: function (item: Item): string {
+        var view = top();
+        return view.historyKey ? view.historyKey(item) : '';
     }
 });
 
@@ -211,6 +222,9 @@ function favoritesTab(): FavoritesView | null {
     return !stack.length && current === 'favorites' && sections.favorites ? sections.favorites as FavoritesView : null;
 }
 root.appendChild(tileHold.el);
+/** On Android, Back on Home asks before leaving the app, as Android apps do (webOS: Back there does nothing) */
+var exitBox = new Confirm();
+root.appendChild(exitBox.el);
 
 function top(): Screen {
     return stack.length ? stack[stack.length - 1] : section(current);
@@ -356,6 +370,13 @@ function back(): void {
     } else if (current !== 'home') {
         showSection('home');
     } else {
+        if (android()) {
+            exitBox.ask('Exit Bolli Twitch?', '', 'Cancel', 'Exit', function (yes: boolean) {
+                if (yes) {
+                    exitApp();
+                }
+            });
+        }
         return;
     }
     settle(false);
@@ -500,9 +521,12 @@ function retryAll(): void {
     }
 }
 
-/** Bolli's shortcuts (Twitch's TV app has none): number keys 1 to 4 open Home, Following, Browse and Search, where the
- * menu has them (a guest's has no Following), unless the screen types digits (Search's keyboard) */
-var SHORTCUTS: MenuItem[] = ['home', 'following', 'browse', 'search'];
+/** Bolli's shortcuts (Twitch's TV app has none): number keys open the menu's items by their place in a signed-in menu
+ * (Home, History with Watch History on its own page, Favorites, Following, Browse, Search, Settings), where the menu
+ * has them (a guest's has no Following: its number does nothing, the others keep theirs), unless the screen types
+ * digits (Search's keyboard) */
+var SHORTCUTS: MenuItem[] = ['home', 'favorites', 'following', 'browse', 'search', 'settings'];
+var SHORTCUTS_HISTORY = withHistory(SHORTCUTS);
 
 /** A key for the menu or the screen on top */
 function onKey(code: number): boolean {
@@ -514,8 +538,11 @@ function onKey(code: number): boolean {
     if (tileHold.onKey(code)) {
         return true;
     }
+    if (exitBox.open) {
+        return exitBox.onKey(code);
+    }
     var view = top();
-    var shortcut = SHORTCUTS[digit(code) - 1];
+    var shortcut = digit(code) ? (historyMode() === 'page' ? SHORTCUTS_HISTORY : SHORTCUTS)[digit(code) - 1] : undefined;
     if (shortcut && menu.order.indexOf(shortcut) >= 0 && (menu.hasFocus || !view.takesDigits || !view.takesDigits())) {
         pick(shortcut);
         return true;
@@ -569,8 +596,30 @@ setActive({
 });
 
 menu.setSignedIn(signedIn());
-// As in Twitch's app, focus starts on the menu's first item
-settle(true);
+menu.setHistory(historyMode() === 'page');
+// Watch History's setting changed (in Settings): History's item comes or goes, and its page with it
+onHistoryMode(function () {
+    var page = historyMode() === 'page';
+    menu.setHistory(page);
+    if (!page && sections.history) {
+        // (on it: Home in its place)
+        if (current === 'history') {
+            showSection('home');
+            settle(false);
+        }
+        var gone = sections.history;
+        delete sections.history;
+        letGo([gone]);
+    }
+});
+// The page chosen to open on (Following needs an account); on Home, as in Twitch's app, focus starts on the menu's
+// first item, on another page in the page
+var first = startPage();
+if (first !== 'home' && menu.order.indexOf(first) >= 0) {
+    current = first;
+    section(first).show();
+}
+settle(current === 'home');
 initOffline(root);
 onNetwork(function (online: boolean) {
     if (online) {

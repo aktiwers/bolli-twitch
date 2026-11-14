@@ -58,6 +58,11 @@
 .bt-live { top: 12px; padding: 0 6px; border-radius: 4.8px; background: #eb0400; font-weight: 600; text-transform: uppercase; }
 .bt-stat { bottom: 12px; padding: 0 4.8px; border-radius: 2.4px; background: rgba(0, 0, 0, .6); white-space: nowrap; }
 .bt-stat--end { left: auto; right: 12px; }
+/* A past broadcast part watched: a bar along the picture's foot (filled by a transform), the counts above it */
+.bt-tile-bar { display: none; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255, 255, 255, .3); }
+.bt-tile--watched .bt-tile-bar { display: block; }
+.bt-tile-bar-fill { height: 4px; background: #a970ff; -webkit-transform-origin: 0 0; }
+.bt-tile--watched .bt-stat { bottom: 16px; }
 .bt-tile-avatar, .bt-tile-art { position: absolute; left: 12px; top: 162px; width: 48px; }
 .bt-tile-avatar { height: 48px; border-radius: 50%; }
 .bt-tile-art { height: 64px; }

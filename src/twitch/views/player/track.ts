@@ -46,6 +46,11 @@ export class Track {
         }
     }
 
+    /** The length it shows (s; 0 none yet) */
+    length(): number {
+        return this.duration;
+    }
+
     /** Where it plays (s): drawn unless a position is being chosen */
     setPosition(seconds: number): void {
         if (this.pending === null) {

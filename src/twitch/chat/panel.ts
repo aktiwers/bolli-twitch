@@ -1,8 +1,9 @@
-// The live player's chat panel as Twitch's TV app draws it (themes/chat.css): 320 wide at the right, over "Join the
-// conversation"; the rows start at the top and, once they fill the panel, the newest stays at the bottom. Lines are
-// queued as they come and made into messages only when drawn, every DRAW_MS (at once when the last draw was longer
-// ago). Up to READ_PER_S a second are shown, and bursts up to KEPT at once; when more keep coming than anyone can read,
-// the oldest not shown yet are skipped. Hidden, it keeps only what it would show and draws it when shown again.
+// The chat panel of a live player (and of a past broadcast's, its chat replayed: no Join band) as Twitch's TV app
+// draws it (themes/chat.css): 320 wide at the right, over "Join the conversation"; the rows start at the top and,
+// once they fill the panel, the newest stays at the bottom. Lines are queued as they come and made into messages only
+// when drawn, every DRAW_MS (at once when the last draw was longer ago). Up to READ_PER_S a second are shown, and
+// bursts up to KEPT at once; when more keep coming than anyone can read, the oldest not shown yet are skipped.
+// Hidden, it keeps only what it would show and draws it when shown again.
 // The rows' list is a layer of its own that only grows downward and is moved up, by whole device pixels (a layer
 // placed between pixels blurs its text), so a draw paints only the rows it adds. Rows past the KEPT newest (above the
 // top edge) are taken off SPARE at a time and reused with their pictures, filled while detached and added back in one
@@ -15,7 +16,7 @@
 // are drawn again as they now show, and once more when a list they newly need has come. How each emote shows is read
 // from the settings when they or the channel change, not per message.
 
-import { h, setClass, setShown, setText, translate, uiScale } from '../../core/dom.js';
+import { h, LAYOUT_HEIGHT, setClass, setShown, setText, translate, uiScale } from '../../core/dom.js';
 import { localClock } from '../../core/time.js';
 import { badgeOf } from './assets.js';
 import { avatarOf } from './avatars.js';
@@ -149,6 +150,8 @@ export class ChatPanel implements ChatEvents {
     /** Messages that may be drawn now: READ_PER_S added a second, at most KEPT */
     private budget = KEPT;
     private shown = true;
+    /** A past broadcast's chat (setReplay) */
+    private replay = false;
     /** Messages drawn and skipped so far (measurements) */
     drawn = 0;
     skipped = 0;
@@ -219,13 +222,10 @@ export class ChatPanel implements ChatEvents {
         s.top = place ? place.top + 'px' : '';
         s.width = place ? place.width + 'px' : '';
         s.height = place ? place.height + 'px' : '';
-        // Twitch's column has its fade at the top and its Join band; elsewhere the rows end near its bottom
         var column = mode === 'column';
-        this.rowsEnd = place && !column ? place.height - OVER_END : ROWS_END;
         this.rowsEl.style.width = place ? place.width + 'px' : '';
-        this.rowsEl.style.height = place && !column ? this.rowsEnd + 'px' : '';
         this.fadeEl.style.display = column ? '' : 'none';
-        this.foot.style.display = column ? '' : 'none';
+        this.fit();
         this.ticker.width = mode === 'ticker' && place ? place.width : 0;
         if (again) {
             this.redraw();
@@ -243,6 +243,23 @@ export class ChatPanel implements ChatEvents {
         if (moved && this.shown && this.queue.length) {
             this.drawSoon();
         }
+    }
+
+    /** A past broadcast's chat: nobody joins it, so Twitch's column has no Join band and its rows go to the bottom */
+    setReplay(): void {
+        this.replay = true;
+        this.fit();
+    }
+
+    /** Twitch's column has its fade at the top and its Join band (not in a replay); elsewhere the rows end near its
+     * bottom */
+    private fit(): void {
+        var place = this.placed;
+        var column = this.mode === 'column';
+        var low = this.replay || !!place && !column;
+        this.rowsEnd = low ? (place ? place.height : LAYOUT_HEIGHT) - OVER_END : ROWS_END;
+        this.rowsEl.style.height = low ? this.rowsEnd + 'px' : '';
+        this.foot.style.display = column && !this.replay ? '' : 'none';
     }
 
     /** Shown or hidden (the player's chat toggle): instant, as in Twitch's app; what came while hidden shows at once */

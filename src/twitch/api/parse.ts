@@ -301,3 +301,10 @@ export function nextCursor(connection: Raw): string | undefined {
     var info = connection && connection.pageInfo;
     return info && info.hasNextPage && info.endCursor ? info.endCursor : undefined;
 }
+
+/** Where a list whose edges carry their own cursors goes on: its last edge's, while Twitch says more follow */
+export function lastCursor(connection: Raw): string | undefined {
+    var edges = connection && connection.edges;
+    var last = edges && edges.length ? edges[edges.length - 1] : null;
+    return connection && connection.pageInfo && connection.pageInfo.hasNextPage && last && last.cursor ? String(last.cursor) : undefined;
+}

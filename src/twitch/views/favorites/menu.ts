@@ -1,19 +1,20 @@
 // A channel's menu, opened by holding OK on a tile that stands for the channel: in the look of Twitch's question box
 // (a panel over the dimmed screen), the channel's name over its choices, one under the other: Add to Favorites (a
-// favorite: Remove from Favorites), Go to channel and, on the Favorites tab, Move (on its rows) and Move to the front. The first choice is
+// favorite: Remove from Favorites), Go to channel, on the Favorites tab Move (on its rows) and Move to the front, and on
+// a Watch History row Remove from History. The first choice is
 // focused; Up/Down move without wrapping, OK picks one and closes the menu, Back closes it. Whoever opened it passes
 // it the keys while it is open.
 
 import { h, setShown, setText, toggleClass } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
 
-export type MenuChoice = 'add' | 'remove' | 'channel' | 'move' | 'front';
+export type MenuChoice = 'add' | 'remove' | 'channel' | 'move' | 'front' | 'forget';
 
 /** Every choice in the order the menu lists them */
-var ORDER: MenuChoice[] = ['add', 'remove', 'channel', 'move', 'front'];
+var ORDER: MenuChoice[] = ['add', 'remove', 'channel', 'move', 'front', 'forget'];
 var LABELS: { [choice: string]: string } = {
     add: 'Add to Favorites', remove: 'Remove from Favorites', channel: 'Go to channel', move: 'Move',
-    front: 'Move to the front'
+    front: 'Move to the front', forget: 'Remove from History'
 };
 
 export class ChannelMenu {

@@ -24,6 +24,9 @@ export interface Screen extends View {
     narrow?(): void;
     /** It shows what OK on item would open (the player's avatar over that channel's page goes back to it) */
     shows?(item: Item): boolean;
+    /** The Watch History entry this tile on it stands for, when it is on a history row ('' none): the channel's menu
+     * offers Remove from History */
+    historyKey?(item: Item): string;
     /** Number keys type on it now (Search's keyboard): the shell's number-key shortcuts leave them to it */
     takesDigits?(): boolean;
     /** What failed is asked again. pressed: OK, which asks only where focus is on Try Again (true: it was, the press

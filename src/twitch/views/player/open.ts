@@ -2,13 +2,15 @@
 
 import { gateInfo, liveInfo } from '../../api/channel.js';
 import { clip, ClipFile } from '../../api/clip.js';
+import { videoComments } from '../../api/comments.js';
 import { followsChannel } from '../../api/follow.js';
 import { Item } from '../../api/types.js';
 import { video } from '../../api/video.js';
 import { ChatConnection } from '../../chat/connection.js';
 import { loadEmotes } from '../../chat/emotes.js';
 import { ChatPanel, PanelLayout } from '../../chat/panel.js';
-import { duration, keep, keyOf, leave, owns, pause, pictureRuns, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
+import { ChatReplay } from '../../chat/replay.js';
+import { duration, keep, keyOf, leave, liveDelay, owns, pause, pictureRuns, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
 import { Navigator, Screen } from '../navigator.js';
 import { gatePassed } from './gate.js';
 import { ChatSide, PlayerDeps, PlayerItem, PlayerSession, PlayerView } from './player.js';
@@ -20,16 +22,26 @@ var session: PlayerSession = {
     position: position, duration: duration, prefetch: prefetch, placeVideo: placeVideo, pictureRuns: pictureRuns,
     plays: function (target: Target): boolean {
         return playingKey() === keyOf(target);
+    },
+    behindLive: function (): number {
+        var d = liveDelay();
+        return d && d.broadcast > 0 ? d.broadcast : 0;
     }
 };
 
 /** A long visit asks the emote services again this often (only those whose time has come: chat/emotes.ts) */
 var EMOTE_CHECK_MS = 30 * 60 * 1000;
 
-/** One chat connection and panel per live player */
-function chatSide(parent: HTMLElement): ChatSide {
+/** One chat panel per player, with its connection (a live player) and its replay (a past broadcast's, made when
+ * first needed; a live player's while it plays the broadcast's recording behind live), position being where the
+ * video is; replayOnly: a past broadcast's, without a connection */
+function chatSide(parent: HTMLElement, position: () => number, replayOnly?: boolean): ChatSide {
     var panel = new ChatPanel(parent);
-    var connection = new ChatConnection();
+    var connection = replayOnly ? null : new ChatConnection();
+    var replay: ChatReplay | null = null;
+    if (replayOnly) {
+        panel.setReplay();
+    }
     var joined = '';
     var emoteTimer = 0;
     return {
@@ -41,9 +53,27 @@ function chatSide(parent: HTMLElement): ChatSide {
         place: function (layout: PanelLayout): void {
             panel.place(layout);
         },
-        open: function (login: string): void {
+        open: function (login: string, videoId?: string, growing?: boolean): void {
             joined = login.toLowerCase();
-            connection.open(login, panel);
+            if (videoId) {
+                if (connection) {
+                    connection.close();
+                }
+                replay = replay || new ChatReplay(panel, position);
+                replay.open(login, function (from: { offset?: number; cursor?: string }) {
+                    return videoComments(videoId, joined, from);
+                }, growing);
+            } else if (connection) {
+                if (replay) {
+                    replay.close();
+                }
+                connection.open(login, panel);
+            }
+        },
+        running: function (on: boolean): void {
+            if (replay) {
+                replay.running(on);
+            }
         },
         emotes: function (channelId: string): void {
             loadEmotes(joined, channelId);
@@ -54,7 +84,12 @@ function chatSide(parent: HTMLElement): ChatSide {
         },
         close: function (): void {
             clearInterval(emoteTimer);
-            connection.close();
+            if (connection) {
+                connection.close();
+            }
+            if (replay) {
+                replay.close();
+            }
         }
     };
 }

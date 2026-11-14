@@ -10,10 +10,10 @@
 
 import { onAccountChange } from './auth.js';
 import { Favorite } from './favorites.js';
-import { FavoriteState, VIDEOS_PAGE, latestVideos, videosNext } from './favorites-feed.js';
+import { FavoriteState, VIDEOS_PAGE, latestVideos } from './favorites-feed.js';
 import { gql } from './gql.js';
 import { Listeners } from './listeners.js';
-import { Raw, nodes, oneReply, parseAll, toVideo } from './parse.js';
+import { Raw, lastCursor, nodes, oneReply, parseAll, toVideo } from './parse.js';
 import { Channel, Video } from './types.js';
 
 /** Channels asked in one request, the past broadcasts asked of each, and how many more of them one call for more
@@ -209,7 +209,7 @@ function take(source: Source, user: Raw): void {
     var held = idsOf(source.videos);
     var fresh = parseAll(nodes(page), function (v: Raw) { return toVideo(v, source.channel); }).filter(function (v) { return !held[v.id]; });
     source.videos = source.videos.concat(fresh);
-    source.next = fresh.length ? videosNext(page) : undefined;
+    source.next = fresh.length ? lastCursor(page) : undefined;
     source.pages++;
 }
 

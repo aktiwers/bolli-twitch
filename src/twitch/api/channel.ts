@@ -21,7 +21,10 @@ var PAGE = 'query ChannelPage($login: String!, $me: Boolean!) { user(login: $log
     ' } ... on Clip { ' + CLIP_IN_ROW + ' ' + GATE_FIELDS + ' } } } } } } }';
 
 /** The player's line, asked again every minute: only what changes while live (no stream: it ended) */
-var LIVE_INFO = 'query LiveInfo($login: String!) { user(login: $login) { stream { id title viewersCount createdAt game { id name displayName } } } }';
+// (the recording as the newest past broadcast still recording: the stream's own archiveVideo answers a signed-in
+// request with a server error)
+var LIVE_INFO = 'query LiveInfo($login: String!) { user(login: $login) { stream { id title viewersCount createdAt game { id name displayName } }' +
+    ' videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { id createdAt status } } } } }';
 
 /** The gate's labels and Twitch's gate kind, asked only for a gated stream, video or clip */
 var GATE_LABELS = 'contentClassificationLabels { localizedName } contentClassificationLabelPolicyProperties { contentGateProperties { contentGate } }';
@@ -55,7 +58,13 @@ export function channelPage(login: string): Promise<ChannelPage> {
 /** What changed on the player's live line; null when the channel is offline (or gone) */
 export function liveInfo(login: string): Promise<LiveUpdate | null> {
     return gql<Raw>(LIVE_INFO, { login: login }).then(function (data: Raw) {
-        return toLiveUpdate(data && data.user && data.user.stream);
+        var user = data && data.user;
+        var update = toLiveUpdate(user && user.stream);
+        var archive = update && nodes(user.videos)[0];
+        if (archive && archive.status === 'RECORDING' && archive.id && Date.parse(archive.createdAt)) {
+            (update as LiveUpdate).archive = { id: archive.id, createdAt: archive.createdAt };
+        }
+        return update;
     });
 }
 
