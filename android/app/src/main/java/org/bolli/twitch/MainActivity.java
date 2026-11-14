@@ -303,6 +303,12 @@ public class MainActivity extends Activity {
             return Build.MANUFACTURER + " " + Build.MODEL + ", Android " + Build.VERSION.RELEASE;
         }
 
+        /** Android's release version alone ("14"), as the version check names it */
+        @JavascriptInterface
+        public String osVersion() {
+            return Build.VERSION.RELEASE;
+        }
+
         @JavascriptInterface
         public boolean canListen() {
             return !getPackageManager().queryIntentActivities(speech(), 0).isEmpty();

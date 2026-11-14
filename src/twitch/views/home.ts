@@ -12,7 +12,8 @@ import { load, save } from '../../core/store.js';
 import { savedUser } from '../api/auth.js';
 import { signedIn } from '../api/gql.js';
 import { ShelfLoader } from '../api/home.js';
-import { Item, Shelf, Stream } from '../api/types.js';
+import { isGame, isStream, isText } from '../api/shapes.js';
+import { Item, Shelf } from '../api/types.js';
 import { Hero, heroOf } from './hero.js';
 import { Navigator, Screen } from './navigator.js';
 import { PagedRows } from './pager.js';
@@ -282,30 +283,17 @@ function fits(kept: Kept | null): kept is Kept {
     }
     for (var i = 0; i < kept.shelves.length; i++) {
         var s = kept.shelves[i];
-        if (!s || !text(s.id) || !text(s.title) || !Array.isArray(s.items) || !s.items.length) {
+        if (!s || !isText(s.id) || !isText(s.title) || !Array.isArray(s.items) || !s.items.length) {
             return false;
         }
         for (var k = 0; k < s.items.length; k++) {
             var item = s.items[k];
-            var ok = !!item && (item.kind === 'stream' ? stream(item.stream) : item.kind === 'game' && game(item.game) &&
-                (item.game.topStream === undefined || stream(item.game.topStream)));
+            var ok = !!item && (item.kind === 'stream' ? isStream(item.stream) : item.kind === 'game' && isGame(item.game) &&
+                (item.game.topStream === undefined || isStream(item.game.topStream)));
             if (!ok) {
                 return false;
             }
         }
     }
     return true;
-}
-
-function stream(s: Stream): boolean {
-    return !!s && text(s.id) && text(s.title) && typeof s.viewers === 'number' && text(s.preview) && !!s.channel &&
-        text(s.channel.id) && text(s.channel.displayName) && text(s.channel.avatar) && (s.game === undefined || game(s.game));
-}
-
-function game(g: Stream['game']): boolean {
-    return !!g && text(g.id) && text(g.displayName) && text(g.boxArt);
-}
-
-function text(v: unknown): boolean {
-    return typeof v === 'string';
 }

@@ -8,8 +8,11 @@
 // item; Up from a screen's top lands there and Down gives focus back to the screen. Each screen says how the menu
 // stands over it (Screen.menu); a screen with nothing to focus leaves focus on the menu. Pages are let go of after the
 // screen under them has painted. After OK navigated (or asked a failed screen again, or a screen said so with
-// holdOk), a held OK's repeats are ignored until it is released. Bolli adds number keys 1 to 4 for the sections and
-// opens a channel a launch or relaunch names.
+// holdOk), a held OK's repeats are ignored until it is released. Bolli adds number keys 1 to 4 for the sections,
+// opens a channel a launch or relaunch names, and asks once a day whether a newer version is out
+// (api/version-check.ts: after the start, back on screen and after a player closed), its notice a toast.
+// Bolli's Favorites is one more section, after Home: channels kept on the device. OK held on a tile that stands for a
+// channel opens the channel's menu (views/favorites/hold.ts), so such a tile opens on OK's release, not its keydown.
 // The account changing (a sign-in, a sign-out, a token Twitch refused) keeps the viewer where they are: the screens
 // that show the account's things (accountBound: Home, Following, Settings, Sign In) go, and so do pages over them
 // from the first such page up (Sign In); the other pages stay open, also over a bound section, which is made anew
@@ -23,15 +26,18 @@ import { isOnline, onNetwork, watchNetwork } from '../core/network.js';
 import { initPerf, mark } from '../core/perf.js';
 import { ignorePointer } from '../core/platform.js';
 import { initScreenSaver } from '../core/screensaver.js';
+import { toast } from '../ui/toast.js';
 import { initAuth, onAccountChange } from './api/auth.js';
 import { forgetCaches } from './api/cache.js';
 import { channelPage } from './api/channel.js';
 import { clip } from './api/clip.js';
+import { refreshFavorites } from './api/favorites-feed.js';
 import { forgetFollows } from './api/follow.js';
 import { following } from './api/following.js';
 import { GqlError, signedIn } from './api/gql.js';
 import { homeLoader } from './api/home.js';
 import { Item } from './api/types.js';
+import { checkAgain, checkVersion, updateHint } from './api/version-check.js';
 import { video } from './api/video.js';
 import { installChatHook } from './chat/hook.js';
 import { hook } from './hook.js';
@@ -46,6 +52,8 @@ import { SearchView } from './views/browse/search.js';
 import { ChannelView } from './views/channel/channel.js';
 import { askPage, prefetchChannel } from './views/channel/data.js';
 import { sessionPlayer } from './views/channel/preview.js';
+import { FavoritesView } from './views/favorites/favorites.js';
+import { TileHold } from './views/favorites/hold.js';
 import { HeldOk } from './views/held-ok.js';
 import { HomeView } from './views/home.js';
 import { MenuItem, TopMenu } from './views/menu.js';
@@ -56,7 +64,8 @@ import { startOf } from './views/player/resume.js';
 import { setRestMs } from './views/rest.js';
 import './player/test-hook.js';
 
-// The version (written in by tools/build_app.mjs), on the page for checks
+// The version (written in by tools/build_app.mjs: appinfo.json's), on the page for checks, Settings and the version
+// check's requests
 document.documentElement.setAttribute('data-version', '__BOLLI_VERSION__');
 
 initPerf();
@@ -73,6 +82,9 @@ var screens: { [item: string]: (nav: Navigator) => Screen } = {
     },
     signin: function (): Screen {
         return new SignInView();
+    },
+    favorites: function (nav: Navigator): Screen {
+        return new FavoritesView(nav);
     },
     // Home's rows when nothing is followed
     following: function (nav: Navigator): Screen {
@@ -159,6 +171,11 @@ var menu = new TopMenu(pick, back, function (item: MenuItem) {
     if (item === 'browse' && !sections.browse && !top().plays) {
         prefetchBrowse();
     }
+    // On Favorites: the tab built ahead under the screen on top, its channels asked again when the answer is old
+    if (item === 'favorites' && !top().plays) {
+        section(item);
+        refreshFavorites();
+    }
 });
 root.appendChild(menu.el);
 var sections: { [item: string]: Screen } = {};
@@ -166,6 +183,34 @@ var current: MenuItem = 'home';
 /** The pages over the current section, the top one last */
 var stack: Screen[] = [];
 var heldOk = new HeldOk();
+/** OK on a channel's tile: its press and, held, the channel's menu */
+var tileHold = new TileHold({
+    top: top,
+    open: openNow,
+    ahead: nav.ahead,
+    settle: function (): void {
+        settle(menu.hasFocus);
+    },
+    onFavorites: function (): boolean {
+        return !stack.length && current === 'favorites';
+    },
+    canMove: function (id: string): boolean {
+        var tab = favoritesTab();
+        return !!tab && tab.canMove(id);
+    },
+    move: function (id: string): void {
+        var tab = favoritesTab();
+        if (tab) {
+            tab.startMove(id);
+        }
+    }
+});
+
+/** The Favorites tab when it is the screen on top */
+function favoritesTab(): FavoritesView | null {
+    return !stack.length && current === 'favorites' && sections.favorites ? sections.favorites as FavoritesView : null;
+}
+root.appendChild(tileHold.el);
 
 function top(): Screen {
     return stack.length ? stack[stack.length - 1] : section(current);
@@ -180,9 +225,11 @@ function section(item: MenuItem): Screen {
     return sections[item];
 }
 
-/** Focus after a navigation: on the menu or on the screen on top, never both, as the screen asks */
+/** Focus after a navigation: on the menu or on the screen on top, never both, as the screen asks. A channel's menu
+ * left open over a screen that is no longer on top closes */
 function settle(toMenu: boolean): void {
     var view = top();
+    tileHold.settled();
     var mode = view.menu || 'items';
     var inMenu = (toMenu || !!view.menuFocus) && mode !== 'none';
     setShown(menu.el, mode !== 'none');
@@ -256,10 +303,14 @@ function showSection(item: MenuItem): void {
     letGo(gone);
 }
 
-/** Screens taken away: removed and destroyed once the screen now on top has painted */
+/** Screens taken away: removed and destroyed once the screen now on top has painted. A player among them: the day's
+ * version check, which waits under one, looks again half a minute on */
 function letGo(gone: Screen[]): void {
     if (!gone.length) {
         return;
+    }
+    if (gone.some(function (view) { return !!view.plays; })) {
+        checkAgain();
     }
     requestAnimationFrame(function () {
         setTimeout(function () {
@@ -274,9 +325,17 @@ function letGo(gone: Screen[]): void {
     });
 }
 
+/** A screen asks to open a tile. During OK's keydown one that stands for a channel waits for OK's release (held: the
+ * channel's menu) */
+function open(item: Item): void {
+    if (heldOk.pressing !== KEY.OK || !tileHold.down(item)) {
+        openNow(item);
+    }
+}
+
 /** OK on a tile: what it opens; the screen right under the top one when that shows the same (the player's avatar
  * over its channel's page goes back to it) */
-function open(item: Item): void {
+function openNow(item: Item): void {
     var under = stack.length > 1 ? stack[stack.length - 2] : stack.length ? section(current) : null;
     if (under && under.shows && under.shows(item)) {
         back();
@@ -451,6 +510,10 @@ function onKey(code: number): boolean {
     if (!isOnline()) {
         return true;
     }
+    // The channel's menu is open, or OK is down on a channel's tile and this is its repeat
+    if (tileHold.onKey(code)) {
+        return true;
+    }
     var view = top();
     var shortcut = SHORTCUTS[digit(code) - 1];
     if (shortcut && menu.order.indexOf(shortcut) >= 0 && (menu.hasFocus || !view.takesDigits || !view.takesDigits())) {
@@ -516,7 +579,7 @@ onNetwork(function (online: boolean) {
 });
 ignorePointer();
 initKeys();
-heldOk.watch();
+heldOk.watch(tileHold);
 // The connection's state: the offline screen, retries, and chat reconnecting at once
 watchNetwork();
 launchChannel(launchParams());
@@ -526,3 +589,18 @@ document.addEventListener('webOSRelaunch', function (e) {
 // No screensaver while a picture plays in sight (the player, a channel page's preview); one loaded ahead out of sight
 // does not count
 initScreenSaver(pictureRuns);
+// Whether a newer version is out: asked once a day, half a minute from here, and told at most once a week by a toast
+// the viewer can see: neither under a video (a player, also one that waits or failed; a channel page's preview) nor
+// behind another app
+checkVersion(function () {
+    return !!top().plays || pictureRuns() || document.hidden;
+}, function (version) {
+    toast('Bolli Twitch ' + version + ' is out.' + updateHint());
+});
+// (and again each time the app comes back on screen: a TV that keeps the app for days starts it only once; and after
+// a player closed, in letGo: a viewer who is in a player most of the time is asked between two of them)
+document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+        checkAgain();
+    }
+});

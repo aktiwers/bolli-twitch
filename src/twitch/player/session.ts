@@ -8,7 +8,7 @@
 // budget per failure episode, the remembered quality, and what is the same for every engine (seek, pause, position,
 // buffer). A worker that cannot start sends past broadcasts to the TV's own player for the rest of the run, while a
 // live stream fails as not playable here (on the TV's own player it freezes on its first picture). Every engine start
-// gets the current height limit and pause, and a past broadcast or clip that showed a picture starts where the viewer
+// gets the current pause, and a past broadcast or clip that showed a picture starts where the viewer
 // was. A past broadcast that still records plays to the end it had at its start, then is resolved again from there.
 // prefetch() resolves a likely next start ahead. A target that already plays is handed over (a preview going full
 // screen), not restarted. Ownership: the screen whose events play owns the playback; a screen going out of sight
@@ -27,13 +27,13 @@ import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
 import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, usherCode, UsherVersion } from '../api/playback.js';
 import { aheadOf, Delay, Engine, EngineEvents, Failure, FailureKind, Fetched, playVideo, Quality, showVideo, Source } from './engine.js';
-import { liveTarget, mediaSourcePlays, mutedRanges, parseQualities, pastBroadcast, segmentStart, windowed } from './master.js';
+import { cutWindow, liveTarget, mediaSourcePlays, movedWindow, mutedRanges, parseQualities, pastBroadcast, segmentStart, Span, windowAt } from './master.js';
 import { hasAds, markAdGaps } from './ads.js';
 import { SegmentAhead, segmentAhead } from './segment.js';
 import { stabilize } from './stable-volume.js';
-import { bandwidth, fitQuality, pickUnder } from './bandwidth.js';
+import { startQuality } from './bandwidth.js';
 import { loadHls } from './hls-loader.js';
-import { MseEngine } from './mse-engine.js';
+import { MseEngine, quickHere } from './mse-engine.js';
 import { NativeEngine } from './native-engine.js';
 import { releasePipeline } from './pipeline.js';
 
@@ -50,8 +50,6 @@ export interface Target {
 }
 
 export interface PlayOptions {
-    /** The largest picture height wanted (a preview); none or 0: no limit */
-    maxHeight?: number;
     muted?: boolean;
     /** Whether a quality picked during this playback is remembered for the next ones (true unless false: a preview) */
     remember?: boolean;
@@ -121,9 +119,12 @@ var QUALITY_KEY = 'twitch.quality';
 var AHEAD_MS = 60 * 1000;
 /** A live stream started ahead and not claimed stops after this: it would download for as long as focus rests */
 var READY_LIVE_MS = 20 * 1000;
+/** A past broadcast is kept this long after its player closed (keep) */
+var KEPT_MS = 60 * 1000;
 /** A live stream on the TV's own player has its playlist looked at for stitched segments this often */
 var AD_CHECK_MS = 20 * 1000;
-/** A long past broadcast's window moves this long before playback reaches its end */
+/** A seek this close to the end of the window hls.js has (or past it, or before it) starts the past broadcast again
+ * with a new window there */
 var REWINDOW_S = 60;
 /** A live stream's spare player type is asked this long after its engine started (out of the start's way), then this
  * often */
@@ -146,8 +147,9 @@ interface Resolved {
     qualities: Quality[];
     /** A past broadcast's start quality's media playlist, fetched ahead with it (it does not change) */
     level?: Fetched;
-    /** And the segment it starts in, being fetched */
+    /** And the segment it starts in, being fetched, and the start position it was asked for */
     segment?: SegmentAhead;
+    segmentFor?: number;
 }
 
 /** An usher answer that is not a master: its status, whether the token explains a refusal, and usher's own code */
@@ -212,9 +214,11 @@ interface Playback {
     at: number;
     /** The past broadcast still records: its playlist got an end (pastBroadcast), so it goes on at that end */
     recording: boolean;
-    /** A long past broadcast's window in hls.js (master.ts windowed): its start, end and the broadcast's end; null for
-     * the whole */
-    window: { from: number; to: number; end: number } | null;
+    /** A past broadcast's window on the Media Source engine (master.ts): what its playlists are cut to now (want),
+     * where the last cut handed to hls.js begins and ends, and the broadcast's end; null: handed whole */
+    window: { want: Span; from: number; to: number; end: number } | null;
+    /** Its engine started and no playlist is cut yet: where the window falls is not known */
+    cutting: boolean;
     /** The end it last went on from (s; 0: none) */
     wentOnAt: number;
     /** The viewer paused: every engine start holds it */
@@ -224,6 +228,9 @@ interface Playback {
     held: boolean;
     /** Started ahead for a resting tile (ready) and not claimed yet */
     ahead: boolean;
+    /** Kept after its player closed (keep), until a claim or keptTimer's end */
+    kept: boolean;
+    keptTimer: number;
     /** A past broadcast's stretches Twitch muted ([start, end] s), and whether it stands in one */
     muted: number[][];
     inMuted: boolean;
@@ -284,6 +291,10 @@ export function videoElement(): HTMLVideoElement {
             }
         });
         video.addEventListener('ended', function () {
+            // (the end of a short length the engine told the TV, not the stream's: the engine goes on)
+            if (now && now.engine && now.engine.length && now.engine.length()) {
+                return;
+            }
             if (now && now.recording && goOn(now)) {
                 return;
             }
@@ -297,10 +308,7 @@ export function videoElement(): HTMLVideoElement {
             if (now && now.shown && now.target.kind !== 'live' && v.readyState >= 2) {
                 now.at = v.currentTime;
                 mutedNow(now, v.currentTime);
-                // Only within the window: right after a start the video may still say where the last one stood
-                if (nearWindowEnd(now, v.currentTime)) {
-                    rewindow(now, v.currentTime);
-                }
+                growWindow(now, v.currentTime);
             }
         });
     }
@@ -422,14 +430,14 @@ function sweepAhead(): void {
  * the segment holding at being fetched (at known: where its player starts it), or r as it is when that fails */
 function withLevel(r: Resolved, at: number | undefined): Promise<Resolved> {
     var list = r.qualities.filter(mediaSourcePlays);
-    var pick = rememberedIndex(list);
-    var first = list[pick >= 0 ? pick : fitQuality(list, bandwidth(), 0)];
+    var first = list[startQuality(list, rememberedIndex(list))];
     if (!first) {
         return Promise.resolve(r);
     }
     return getText(first.url, 10000).then(function (text) {
         r.level = { url: first.url, text: text, at: Date.now() };
-        r.segment = at !== undefined ? segmentAhead(first.url, text, at) || undefined : undefined;
+        r.segment = at !== undefined ? segmentAhead(first.url, text, at, quickHere(), first.bandwidth) || undefined : undefined;
+        r.segmentFor = at;
         return r;
     }, function () {
         return r;
@@ -439,7 +447,8 @@ function withLevel(r: Resolved, at: number | undefined): Promise<Resolved> {
 /** Resolves a likely next start ahead (used by a start within AHEAD_MS); loads hls.js when it will play it. Settles
  * (never rejects) once the stream is resolved or failed */
 export function prefetch(target: Target): Promise<unknown> {
-    if (target.kind === 'clip') {
+    // (what plays already, also kept after its player closed, is claimed as it stands: no start to fetch)
+    if (target.kind === 'clip' || (now && !now.failed && key(now.target) === key(target))) {
         return Promise.resolve();
     }
     if (engineFor(target.kind) === 'mse') {
@@ -475,7 +484,8 @@ export function prefetch(target: Target): Promise<unknown> {
  * stops (a past broadcast stops loading once its buffer is full) */
 export function ready(target: Target): void {
     var p = now;
-    if (target.kind === 'clip' || p && (!p.ahead || key(p.target) === key(target) && !p.failed)) {
+    // (a past broadcast kept after its player closed gives way to another tile's, as one started ahead does)
+    if (target.kind === 'clip' || p && (!(p.ahead || p.kept) || key(p.target) === key(target) && !p.failed)) {
         return;
     }
     play(target, {}, { muted: true, remember: false });
@@ -527,6 +537,8 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
             p.events = events;
             p.left = false;
             p.ahead = false;
+            p.kept = false;
+            clearTimeout(p.keptTimer);
             applyOptions(p, opts);
             moveTo(p, startAt);
             unhold(p);
@@ -549,8 +561,8 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         files: target.files && target.files.length ? target.files : null, events: events, options: opts,
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
         triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, swaps: 0, spare: null, spareAt: 0, inBreak: false, retries: 0, movingSince: 0,
-        startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, window: null, wentOnAt: 0, paused: false, left: false, held: false,
-        ahead: false, muted: [], inMuted: false, failed: '', adTimer: 0, retryTimer: 0
+        startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, window: null, cutting: false, wentOnAt: 0, paused: false, left: false, held: false,
+        ahead: false, kept: false, keptTimer: 0, muted: [], inMuted: false, failed: '', adTimer: 0, retryTimer: 0
     };
     applyOptions(p, opts);
     drawVideo();
@@ -563,13 +575,6 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
 function applyOptions(p: Playback, opts: PlayOptions): void {
     p.options = opts;
     videoElement().muted = !!opts.muted;
-    var height = opts.maxHeight || 0;
-    if (p.source && p.source.maxHeight !== height) {
-        p.source.maxHeight = height;
-        if (p.engine) {
-            p.engine.setMaxHeight(height);
-        }
-    }
 }
 
 /** A past broadcast or clip handed over with another start position goes there */
@@ -656,7 +661,7 @@ function startClip(p: Playback): void {
             failed(p, { failure: { kind: 'offline', detail: 'the clip has no file' } });
             return;
         }
-        startEngine(p, { kind: 'clip', url: list[0].url, master: '', qualities: list, quality: rememberedIndex(list), maxHeight: p.options.maxHeight || 0 }, null);
+        startEngine(p, { kind: 'clip', url: list[0].url, master: '', qualities: list, quality: rememberedIndex(list) }, null);
     }, function (e) {
         if (!stale(p, attempt)) {
             failed(p, outcome(p, e));
@@ -679,16 +684,14 @@ function startStream(p: Playback): void {
             failed(p, { failure: { kind: 'stream', detail: r.qualities.length ? 'no quality this device plays' : 'no qualities' } });
             return undefined;
         }
-        var height = p.options.maxHeight || 0;
-        var source: Source = { kind: p.target.kind, url: r.url, master: r.text, qualities: list, quality: rememberedIndex(list), maxHeight: height };
+        var source: Source = { kind: p.target.kind, url: r.url, master: r.text, qualities: list, quality: rememberedIndex(list) };
         var live = p.target.kind === 'live';
         if (!live && p.engineName === 'native') {
             // Nothing stitched to look for, and the TV's player fetches the playlist itself
             startEngine(p, source, r.token, true);
             return undefined;
         }
-        var pick = pickUnder(list, source.quality, height);
-        var first = list[pick >= 0 ? pick : fitQuality(list, bandwidth(), height)];
+        var first = list[startQuality(list, source.quality)];
         var kept = r.level && r.level.url === first.url ? r.level : null;
         return (kept ? Promise.resolve(kept.text) : getText(first.url, 10000)).then(function (text) {
             if (stale(p, attempt)) {
@@ -704,8 +707,13 @@ function startStream(p: Playback): void {
             if (!live) {
                 p.muted = mutedRanges(text);
             }
-            if (kept && r.segment) {
+            var at = (p.shown ? p.at : p.target.startAt) || 0;
+            if (kept && r.segment && r.segmentFor === at) {
                 source.segment = r.segment;
+            } else if (!live && quickHere()) {
+                // The segment the start lands in is asked now: hls.js asks for it only once it has read the playlist
+                // (0.25-0.45 s later on the TV); one fetched ahead for another position (a seek meanwhile) is let go
+                source.segment = segmentAhead(first.url, text, at, true, first.bandwidth) || undefined;
             }
             // Stitched segments in the last player type too: it plays (those left out) but is not remembered
             startEngine(p, source, r.token, !ads);
@@ -868,44 +876,71 @@ function keepSpare(p: Playback): void {
     }, noop);
 }
 
-/** A past broadcast's media playlists on the Media Source engine: one date tag, an end while it records, and a long
- * one cut to a window around at (where this start begins) */
+/** A past broadcast's media playlists on the Media Source engine: one date tag, an end while it records, and cut to
+ * a window: around at (where this start begins) when the first one comes, then as p's window has moved on */
 function vodFilter(p: Playback, at: number): (text: string) => string {
     return function (text: string): string {
         var r = pastBroadcast(text);
         p.recording = r.recording;
-        var w = windowed(r.text, at);
-        p.window = w ? { from: w.from, to: w.to, end: w.end } : null;
-        return w ? w.text : r.text;
+        p.cutting = false;
+        var w = p.window;
+        var want = w ? w.want : windowAt(r.text, at);
+        if (!want) {
+            return r.text;
+        }
+        var cut = cutWindow(r.text, want);
+        p.window = { want: want, from: cut.from, to: cut.to, end: cut.end };
+        return cut.text;
     };
 }
 
-/** A long past broadcast goes on from at with a window around it: its engine started again there */
-function rewindow(p: Playback, at: number): void {
-    p.window = null;
-    p.at = at;
-    if (p.source) {
-        startEngine(p, p.source, null);
+/** Playback at at nears the end of p's window: it moves on, and the engine hands hls.js the grown playlist. Only
+ * within what hls.js has: right after a start the video may still say where the last one stood */
+function growWindow(p: Playback, at: number): void {
+    var w = p.window;
+    var next = w && at >= w.from && at <= w.to ? movedWindow(w.want, at, w.end) : null;
+    if (w && next) {
+        w.want = next;
+        if (p.engine && p.engine.refresh) {
+            p.engine.refresh();
+        }
     }
 }
 
-/** Whether playback at at is in the last REWINDOW_S of p's window, with more of the broadcast after it (a position
- * outside the window is one the video still says from the start before) */
-function nearWindowEnd(p: Playback, at: number): boolean {
-    var w = p.window;
-    return !!w && w.to < w.end && at > w.to - REWINDOW_S && at <= w.to;
+/** A past broadcast goes on from at with a new window around it: its engine started again there, where the segment
+ * holding at begins (the TV shows a picture once it has about 5 s from where it starts), the playlist of the quality
+ * the new start plays first served as fetched before and that segment asked at once */
+function rewindow(p: Playback, at: number): void {
+    var source = p.source;
+    var q = source ? source.qualities[startQuality(source.qualities, source.quality)] : null;
+    var text = q && source && source.levels ? source.levels[q.url] : undefined;
+    if (source && q && typeof text === 'string') {
+        at = segmentStart(text, at);
+        source.level = { url: q.url, text: text, at: Date.now() };
+        source.segment = quickHere() ? segmentAhead(q.url, text, at, true, q.bandwidth) || undefined : undefined;
+    }
+    p.window = null;
+    p.at = at;
+    if (!p.shown) {
+        // (a start without a picture yet starts where it was asked to)
+        p.target.startAt = at;
+    }
+    if (source) {
+        startEngine(p, source, null);
+    }
 }
 
-/** Whether a seek to at leaves p's window (before it, or near or past its end) */
+/** Whether a seek to at leaves p's window (before it, or near or past its end), or may: the window is not cut yet,
+ * and the first cut is made around where the start began (a seek past it would wait for a playlist that never
+ * grows, one before it land in the gap) */
 function outsideWindow(p: Playback, at: number): boolean {
     var w = p.window;
-    return !!w && (at < w.from || (w.to < w.end && at > w.to - REWINDOW_S));
+    return (p.cutting && !p.failed) || (!!w && (at < w.from || (w.to < w.end && at > w.to - REWINDOW_S)));
 }
 
 /** Starts p's engine on source. token: a new one for it, which was asked as p's player type; adFree: that start was
- * seen without stitched segments (only then is its player type remembered for the run). The options may have changed
- * since source was made (a hand-over), and a past broadcast or clip that showed a picture starts where the viewer
- * was. */
+ * seen without stitched segments (only then is its player type remembered for the run). A past broadcast or clip
+ * that showed a picture starts where the viewer was. */
 function startEngine(p: Playback, source: Source, token: Token | null, adFree?: boolean): void {
     var v = videoElement();
     var engine = engineOf(p.engineName);
@@ -918,7 +953,6 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
     var typeChanged = !!p.source && p.target.kind !== 'clip' && p.playingType !== p.type;
     p.engine = engine;
     p.source = source;
-    source.maxHeight = p.options.maxHeight || 0;
     source.startAt = p.shown && p.target.kind !== 'live' ? p.at : p.target.startAt;
     if (!p.shown && source.kind === 'vod' && source.startAt && source.level) {
         // A past broadcast opens where the segment holding its start begins (at most 10 s before): the TV shows its
@@ -941,7 +975,23 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
         source.swap = swapper(p);
         p.spareAt = Date.now();
     } else if (source.kind === 'vod' && p.engineName === 'mse') {
+        // A fresh hls.js gets a fresh window (with the gap before it)
+        p.window = null;
+        p.cutting = true;
         source.filter = vodFilter(p, source.startAt || 0);
+        source.whole = function (): number {
+            return p.window ? p.window.end : 0;
+        };
+        source.levels = source.levels || {};
+        if (source.level) {
+            // (as hls.js's first load of it keeps it: a seek before that starts again with it, nothing fetched)
+            source.levels[source.level.url] = source.level.text;
+        }
+    } else {
+        // (a source an engine of the other kind had: the TV's own player after a failed worker gets the stream whole)
+        p.window = null;
+        p.cutting = false;
+        source.filter = source.whole = source.swap = source.levels = undefined;
     }
     var run = ++p.run;
     clearTimeout(p.adTimer);
@@ -1184,6 +1234,13 @@ export function pictureRuns(): boolean {
 }
 
 /** How far the live stream that plays is behind (the test hook), or null */
+/** The past broadcast's window in hls.js (the test hook): where the cut it has begins and ends, and the broadcast's
+ * end; null: it has all of it */
+export function vodWindow(): { from: number; to: number; end: number } | null {
+    var w = now && now.window;
+    return w ? { from: w.from, to: w.to, end: w.end } : null;
+}
+
 export function liveDelay(): Delay | null {
     return now && now.engine && now.engine.liveDelay ? now.engine.liveDelay() : null;
 }
@@ -1226,6 +1283,14 @@ function hold(p: Playback): void {
     }
 }
 
+/** The video plays, unless p's engine plays it itself later: none started yet (the stream is still resolved; the
+ * video still has the last one), or it still stands in the last stream */
+function playOn(p: Playback): void {
+    if (p.engine && (!p.engine.mayPlay || p.engine.mayPlay())) {
+        playVideo(videoElement());
+    }
+}
+
 /** Claimed again: plays on unless the viewer paused */
 function unhold(p: Playback): void {
     if (!p.held) {
@@ -1233,7 +1298,7 @@ function unhold(p: Playback): void {
     }
     p.held = false;
     if (!p.paused) {
-        playVideo(videoElement());
+        playOn(p);
         if (p.engine) {
             p.engine.paused(false);
         }
@@ -1300,11 +1365,39 @@ export function stop(): void {
     if (p) {
         clearTimeout(p.adTimer);
         clearTimeout(p.retryTimer);
+        clearTimeout(p.keptTimer);
         if (p.engine) {
             p.engine.stop();
         }
         drawVideo();
     }
+}
+
+/** Its player closes (Back): a past broadcast that has shown its picture is kept KEPT_MS, paused and out of sight,
+ * instead of stopped. Its player opened again claims it (play), and it plays on where it stood, nothing loaded
+ * anew. It goes when its time is up, when anything else plays, when focus rests on another tile (ready) and when
+ * the app hides. Not a live stream (it would come back that far behind) nor a clip; those stop. */
+export function keep(events: SessionEvents): void {
+    var p = now;
+    if (!p || p.events !== events) {
+        return;
+    }
+    if (p.target.kind !== 'vod' || p.failed || !p.shown) {
+        stop();
+        return;
+    }
+    var kept = p;
+    // (its screen is gone: it hears no more of it)
+    kept.events = {};
+    kept.left = true;
+    kept.kept = true;
+    hold(kept);
+    clearTimeout(kept.keptTimer);
+    kept.keptTimer = setTimeout(function () {
+        if (kept === now && kept.kept) {
+            stop();
+        }
+    }, KEPT_MS) as unknown as number;
 }
 
 /** Stops and lets the video and the kept pipeline go (the app going to the background); the video stays where its
@@ -1347,8 +1440,19 @@ export function seek(seconds: number): void {
             rewindow(p, at);
             return;
         }
-        p.at = p.engine && p.engine.seekTarget ? p.engine.seekTarget(at) : at;
-        videoElement().currentTime = p.at;
+        if (!p.engine) {
+            // Still resolved: the start goes there. The video is not touched: it still stands in the last stream (a
+            // kept pipeline's), and a seek there to where nothing comes would be left waiting for the next start
+            p.at = at;
+            if (!p.shown) {
+                p.target.startAt = at;
+            }
+        } else if (p.engine.seek) {
+            p.at = p.engine.seek(at);
+        } else {
+            p.at = at;
+            videoElement().currentTime = at;
+        }
     }
 }
 
@@ -1371,7 +1475,7 @@ export function resume(): void {
     var p = now;
     if (p) {
         p.paused = false;
-        playVideo(videoElement());
+        playOn(p);
         if (p.engine) {
             p.engine.paused(false);
         }
@@ -1389,7 +1493,7 @@ export function bufferedAhead(): number {
 
 /** The whole video's seconds (past broadcasts, clips; 0 live or not known yet) */
 export function duration(): number {
-    var d = videoElement().duration;
+    var d = now && now.engine && now.engine.length && now.engine.length() || videoElement().duration;
     return now && now.target.kind !== 'live' && isFinite(d) ? d : 0;
 }
 

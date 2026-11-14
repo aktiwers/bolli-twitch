@@ -2,11 +2,12 @@
 // parts (Twitch's emotes where the line places them, then the words that name a third-party emote) with the sender's
 // badges and the name colour Twitch's TV app draws; a sub or resub as a notice in the TV app's
 // words; gifts and raids, which the TV app leaves out, as a Bolli extra in Twitch's own system text (on unless switched
-// off in Settings); a timeout or ban as a grey status line.
+// off in Settings); a timeout or ban as a grey status line. How the live chat settings show each emote is worked out
+// when a message is drawn (shownParts), so a change of them needs no line read again.
 
 import { load, save } from '../../core/store.js';
 import { IrcLine, tagValue } from './irc.js';
-import { ChatEmote, EmoteFinder, Message, MessageKind, Part } from './types.js';
+import { ChatEmote, EmoteFinder, EmotePart, EmoteShow, Message, MessageKind, Part } from './types.js';
 
 /** The picture of badge "set/version" in channel's chat, or '' when the lists don't have it (chat/assets.ts) */
 export type BadgeLookup = (channel: string, id: string) => string;
@@ -240,7 +241,7 @@ export function partsOf(text: string, emotes: string, extra?: EmoteFinder | null
         if (from > pos) {
             addText(parts, text.slice(pos, from), extra);
         }
-        parts.push({ kind: 'emote', name: text.slice(from, to), url: EMOTE_URL + ranges[r].id + '/static/dark/2.0' });
+        parts.push({ kind: 'emote', name: text.slice(from, to), url: EMOTE_URL + ranges[r].id + '/static/dark/2.0', id: ranges[r].id });
         pos = to;
     }
     if (pos < text.length) {
@@ -270,7 +271,7 @@ var LINK = /^(?:https?:\/\/\S+|www\.\S+\.\S+|(?:[a-z0-9-]+\.)+(?:com|net|org|tv|
 var SPACES = /(\s+)/;
 
 /** Text, with its addresses as link parts and the words extra knows as its emotes; a zero-width emote right after
- * an emote goes over it (the space between them left out). Plain stretches are cut from words as they are */
+ * an emote goes over it (the spaces between them kept in its part). Plain stretches are cut from words as they are */
 function addText(parts: Part[], words: string, extra?: EmoteFinder | null): void {
     if (!extra && words.indexOf('.') === -1) {
         parts.push(textPart(words));
@@ -290,7 +291,7 @@ function addText(parts: Part[], words: string, extra?: EmoteFinder | null): void
             if (at > from && !over) {
                 parts.push(textPart(words.slice(from, at)));
             }
-            parts.push(emote ? emotePart(piece, emote, over) : { kind: 'link', text: piece });
+            parts.push(emote ? emotePart(piece, emote, over, over ? words.slice(from, at) : '') : { kind: 'link', text: piece });
             from = at + piece.length;
             spaces = true;
         } else if (word) {
@@ -303,16 +304,97 @@ function addText(parts: Part[], words: string, extra?: EmoteFinder | null): void
     }
 }
 
-/** A third-party emote's part: its ratio when it is not square, over when drawn over the emote before it */
-function emotePart(name: string, emote: ChatEmote, over: boolean): Part {
-    var part: Part = { kind: 'emote', name: name, url: emote.url };
+/** A third-party emote's part: its ratio when it is not square; over when drawn over the emote before it, with the
+ * spaces typed between them */
+function emotePart(name: string, emote: ChatEmote, over: boolean, gap: string): Part {
+    var part: EmotePart = { kind: 'emote', name: name, url: emote.url };
     if (emote.ratio !== 1) {
         part.ratio = emote.ratio;
     }
     if (over) {
         part.over = true;
+        part.gap = gap;
     }
     return part;
+}
+
+/** parts with the words extra knows made its emotes: for a message made before its channel's lists were here, or
+ * while word emotes showed as text */
+export function withWordEmotes(parts: Part[], extra: EmoteFinder): Part[] {
+    var out: Part[] = [];
+    for (var i = 0; i < parts.length; i++) {
+        var part = parts[i];
+        if (part.kind === 'text') {
+            addText(out, part.text, extra);
+        } else {
+            out.push(part);
+        }
+    }
+    return out;
+}
+
+var SPACE_LAST = /\s$/;
+var SPACES_FIRST = /^\s+/;
+var SPACES_LAST = /\s+$/;
+/** What draws nothing: spaces, and the characters without a shape of their own (zero-width and format characters,
+ * fillers, variation selectors, the tag characters some chat programs end a repeated message with) */
+var UNSEEN = /[\s\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0]|\uDB40[\uDC00-\uDFFF]/g;
+
+/** parts as the live chat settings show their emotes (show: how one shows): as its picture, as the word that was
+ * typed, or left out, the spaces around it then made one (none at the message's start or end). parts themselves
+ * without an emote; [] when nothing that can be seen is left */
+export function shownParts(parts: Part[], show: (emote: EmotePart) => EmoteShow): Part[] {
+    var first = 0;
+    while (first < parts.length && parts[first].kind !== 'emote') {
+        first++;
+    }
+    if (first === parts.length) {
+        return parts;
+    }
+    var out: Part[] = [];
+    /** The text since the last picture or link, which goes into out as one part; cut: an emote was left out since
+     * anything was last kept */
+    var text = '';
+    var cut = false;
+    for (var i = 0; i < parts.length; i++) {
+        var part = parts[i];
+        var how: EmoteShow | '' = part.kind === 'emote' ? show(part) : '';
+        if (how === 'hidden') {
+            cut = true;
+            continue;
+        }
+        var words = part.kind === 'text' ? part.text : '';
+        if (part.kind === 'emote') {
+            // One drawn over the emote before it stays so only as a picture right after that one's picture; else it
+            // stands on its own, after the spaces typed between them
+            var over = how === 'pictures' && !text && !cut && out.length > 0 && out[out.length - 1].kind === 'emote';
+            words = (part.over && !over ? part.gap || '' : '') + (how === 'text' ? part.name : '');
+        }
+        if (cut && words) {
+            // Spaces (or the message's start) before what was left out: those after it go
+            if (text ? SPACE_LAST.test(text) : !out.length) {
+                words = words.replace(SPACES_FIRST, '');
+            }
+            cut = !words;
+        }
+        text += words;
+        if (part.kind !== 'text' && how !== 'text') {
+            if (text) {
+                out.push(textPart(text));
+                text = '';
+            }
+            out.push(part);
+            cut = false;
+        }
+    }
+    if (cut) {
+        text = text.replace(SPACES_LAST, '');
+    }
+    // Text alone is left, with nothing in it to see (after the emotes left out, a mark that draws nothing): none
+    if (text && (out.length || text.replace(UNSEEN, ''))) {
+        out.push(textPart(text));
+    }
+    return out;
 }
 
 /** What a CLEARMSG or CLEARCHAT deletes: one message (ids), all of a login's, or the whole chat (neither) */

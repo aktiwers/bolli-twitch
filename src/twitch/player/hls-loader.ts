@@ -2,16 +2,27 @@
 // the Media Source engine starts or is prefetched, so the app's own script stays small; then starts its segment worker
 // once and keeps it for the app's run (every hls.js instance shares it, so a stopped one can be destroyed at once).
 // Android's WebView starts no worker from a file:// address (the page's own), so there the worker's text is read and
-// started from a Blob. Also the part of hls.js's API the engine uses.
+// started from a Blob. webOS TV 1.x-2.x runs no worker at all (it makes one and never runs it): there the worker's
+// script runs on the page's own thread (same-thread-worker.ts). Also the part of hls.js's API the engine uses.
 
-import { android } from '../../core/platform.js';
+import { android, oldEngine } from '../../core/platform.js';
+import { readScript, withSameThreadWorker } from './same-thread-worker.js';
+
+/** A media playlist as hls.js read it: its segments in order, where each begins and how long it is (s), and where
+ * it ends */
+export interface HlsDetails {
+    fragments: { start: number; duration: number; gap?: boolean; url?: string }[];
+    edge: number;
+}
 
 /** One quality as hls.js lists it (its levels are sorted by bitrate, lowest first) */
 export interface HlsLevel {
     /** Its media playlist (first) */
     url: string[];
-    /** Its media playlist read: the segments, where each begins and how long it is (s) */
-    details?: { fragments: { start: number; duration: number }[] };
+    /** Its declared rate (bits a second) */
+    bitrate?: number;
+    /** Its media playlist read */
+    details?: HlsDetails;
 }
 
 export interface HlsInstance {
@@ -21,14 +32,16 @@ export interface HlsInstance {
     nextLevel: number;
     loadLevel: number;
     startLevel: number;
-    capLevelToPlayerSize: boolean;
     readonly bandwidthEstimate: number;
     /** Seconds behind the live playlist's end */
     readonly latency: number;
     /** The playing frame's time as the playlist dates it */
     readonly playingDate: Date | null;
     on(event: string, listener: (event: string, data: any) => void): void;
-    attachMedia(media: HTMLVideoElement | { media: HTMLVideoElement; mediaSource: MediaSource; tracks: unknown }): void;
+    /** Tells hls.js's own parts an event (a buffer flush; a media playlist as updated: the duration is set anew) */
+    trigger(event: string, data: unknown): void;
+    /** overrides.duration: the source's duration while it is set, instead of the media playlist's end */
+    attachMedia(media: HTMLVideoElement | { media: HTMLVideoElement; mediaSource?: MediaSource; tracks?: unknown; overrides?: { duration?: number } }): void;
     loadSource(url: string): void;
     startLoad(position?: number): void;
     stopLoad(): void;
@@ -72,7 +85,7 @@ function broke(): void {
  * on (hls.js tells that error itself). */
 function startWorker(Hls: HlsStatic): void {
     try {
-        var worker = Hls.loadWorker(workerUrl).worker;
+        var worker = oldEngine() ? withSameThreadWorker(function () { return Hls.loadWorker(workerUrl).worker; }) : Hls.loadWorker(workerUrl).worker;
         var answered = function (): void {
             workerRan = true;
             worker.removeEventListener('message', answered);
@@ -134,19 +147,12 @@ function workerSource(): Promise<void> {
         return Promise.resolve(undefined);
     }
     return new Promise<void>(function (resolve) {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', HLS_WORKER);
-        xhr.onload = function () {
-            // A file:// read says status 0
-            if ((xhr.status === 0 || xhr.status === 200) && xhr.responseText) {
-                workerUrl = URL.createObjectURL(new Blob([xhr.responseText], { type: 'text/javascript' }));
+        readScript(HLS_WORKER, function (text) {
+            if (text) {
+                workerUrl = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
             }
             resolve(undefined);
-        };
-        xhr.onerror = function () {
-            resolve(undefined);
-        };
-        xhr.send();
+        });
     });
 }
 

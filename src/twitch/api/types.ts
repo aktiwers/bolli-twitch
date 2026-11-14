@@ -102,13 +102,14 @@ export interface Clip {
 }
 
 /** One tile of a row. An offline channel tile: lastLive is when its last broadcast began (ISO), lastGame what it
- * played (Following's hero: "<when> playing <category>") */
+ * played (Following's hero: "<when> playing <category>"); ghost: an offline favorite standing in Live Now while a
+ * favorite is moved there (drawn as a greyed stream tile) */
 export type Item =
     { kind: 'stream'; stream: Stream } |
     { kind: 'game'; game: Game } |
     { kind: 'video'; video: Video } |
     { kind: 'clip'; clip: Clip } |
-    { kind: 'channel'; channel: Channel; live: boolean; lastLive?: string; lastGame?: Game };
+    { kind: 'channel'; channel: Channel; live: boolean; lastLive?: string; lastGame?: Game; ghost?: boolean };
 
 /** A row with its title as Twitch words it */
 export interface Shelf {

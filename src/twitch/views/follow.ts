@@ -24,34 +24,35 @@ export interface FollowTarget {
     name: string;
 }
 
-export class FollowButton {
+/** A button of Follow's look: an icon and a word, both by its state (Follow's heart, Favorite's star) */
+export class StateButton {
     el: HTMLElement;
     private icon: HTMLElement;
     private label: HTMLElement;
     private drawn: boolean | null = null;
 
-    /** cls: the screen's own class for its place */
-    constructor(cls: string) {
+    /** cls: the screen's own class for its place; iconOf, off and on: its icon and word by its state */
+    constructor(cls: string, private iconOf: (on: boolean) => Node, private off: string, private on: string) {
         this.el = h('div', 'bt-button bt-icon-button ' + cls);
         this.icon = this.el.appendChild(h('span', 'bt-button-icon')) as HTMLElement;
         this.label = this.el.appendChild(h('span')) as HTMLElement;
         this.draw(false);
     }
 
-    /** Unfollow with the filled heart (on), or Follow */
     draw(on: boolean): void {
         if (on === this.drawn) {
             return;
         }
         this.drawn = on;
         this.icon.textContent = '';
-        this.icon.appendChild(heartIcon(on));
-        setText(this.label, on ? 'Unfollow' : 'Follow');
+        this.icon.appendChild(this.iconOf(on));
+        setText(this.label, on ? this.on : this.off);
     }
 }
 
 export class Follow {
-    button: FollowButton;
+    /** Unfollow with the filled heart once followed, else Follow */
+    button: StateButton;
     private target: FollowTarget | null = null;
     /** A follow or unfollow asked and not answered: presses wait for it */
     private busy = false;
@@ -59,7 +60,7 @@ export class Follow {
 
     /** confirm: the screen's question box (a channel's Unfollow question) */
     constructor(cls: string, private nav: Navigator, private confirm: Confirm | null) {
-        this.button = new FollowButton(cls);
+        this.button = new StateButton(cls, heartIcon, 'Follow', 'Unfollow');
         var self = this;
         this.unlisten = onFollowChange(function (kind: FollowKind | null, id: string) {
             var t = self.target;

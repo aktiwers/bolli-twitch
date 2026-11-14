@@ -1,18 +1,21 @@
-// Settings as Twitch's TV app has it: five cards (Your Profile, Need Help?, Terms of Service, Privacy Policy,
-// Cookies and Advertising Choices), the first opening Your Profile, the others their QR pages. Under them Bolli's
-// own group in the same cards: chat's gift and raid notices, third-party emotes, live chat (its settings page, over
-// an example), the start dim, the mature content warning, Stable Volume (Android), the channel points' bonus, the
-// stream request version, the remembered quality, and the version. OK changes a setting to its next choice
-// (Left/Right step back and forth); it is saved at once and holds from the next start of a stream. The QR library
-// loads when Settings first shows, ready for the QR pages.
+// Settings in the cards of Twitch's TV app, in groups under headings: Your Profile alone at the top, then Playback
+// (the remembered quality, Stable Volume on Android, the start dim, the stream request version, the channel page's
+// preview, the mature content warning), Chat (live chat's settings page over an example, gift and raid notices, the
+// channel points' bonus), Favorites (the tab's two rows and its previews), Twitch (its four QR pages), and last, set a
+// little apart, the check for new versions and the version, which also names a newer one that is out. OK changes a
+// setting to its next choice (Left/Right step back and forth); it is saved at once and holds from the next start of
+// a stream. The QR library loads when Settings first shows, ready for the QR pages.
 
 import { h, setShown } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
+import { android } from '../../../core/platform.js';
 import { claimsBonus, setClaimsBonus } from '../../api/points.js';
-import { setThirdPartyEmotes, thirdPartyEmotes } from '../../chat/emotes.js';
+import { CheckMode, hasVersionCheck, newerVersion, setVersionCheck, updateHint, versionCheck } from '../../api/version-check.js';
 import { extraNotices, setExtraNotices } from '../../chat/parse.js';
 import { rememberedQuality, rememberQuality, setUsher, usherPref } from '../../player/session.js';
 import { keepPreview, setKeepPreview } from '../channel/keep-preview.js';
+import { favoritePreviews, setFavoritePreviews } from '../favorites/grid-preview.js';
+import { setShowsAllRow, setShowsLiveRow, showsAllRow, showsLiveRow } from '../favorites/rows-shown.js';
 import { MenuMode, Navigator, Screen } from '../navigator.js';
 import { ChatSettings, chatSummary } from '../player/chat-settings.js';
 import { setStartDim, startDim } from '../player/start-dim.js';
@@ -39,8 +42,9 @@ interface Setting {
     page?: boolean;
 }
 
+/** Twitch's cards, each opening its page: Your Profile, and the QR pages */
+var PROFILE: Card = { icon: 'profile', title: 'Your Profile', line: 'Visit your profile to sign in or out.' };
 var TWITCH: (Card & { id: string })[] = [
-    { id: 'profile', icon: 'profile', title: 'Your Profile', line: 'Visit your profile to sign in or out.' },
     { id: 'help', icon: 'help', title: 'Need Help?', line: 'Visit ' + listed('help') + ' for help.' },
     { id: 'terms', icon: 'terms', title: 'Terms of Service', line: 'Visit ' + listed('terms') + ' to view the Terms of Service.' },
     { id: 'privacy', icon: 'privacy', title: 'Privacy Policy', line: 'Visit ' + listed('privacy') + ' to view the Privacy Policy.' },
@@ -74,10 +78,6 @@ function onOffCard(icon: string, title: string, get: () => boolean, set: (on: bo
 
 var NOTICES = onOffCard('notices', 'Gift and Raid Notices', extraNotices, setExtraNotices,
     'Chat shows gift subs and raids too, which Twitch\'s TV app leaves out.', 'Chat shows subs and resubs only, as Twitch\'s TV app does.');
-
-var EMOTES = onOffCard('emotes', 'Third-Party Emotes', thirdPartyEmotes, setThirdPartyEmotes,
-    'Chat shows 7TV, BetterTTV and FrankerFaceZ emotes too, which Twitch\'s TV app leaves out.',
-    'Chat shows Twitch\'s own emotes only, as Twitch\'s TV app does.');
 
 /** The live chat settings page (chat-settings.ts): its values in the card's line, OK opens it over Settings */
 var CHAT: Setting = {
@@ -126,17 +126,51 @@ var USHER: Setting = {
     }
 };
 
-/** Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there) */
-var PREVIEW = onOffCard('pip', 'Keep Live Preview', keepPreview, setKeepPreview,
-    'The channel page\'s preview stays in view while you browse its videos.',
-    'The channel page\'s preview hides while you browse its videos, as in Twitch\'s TV app.');
+/** The channel page's preview while focus is in its rows: kept in view, or covered by the shrinking header as in
+ * Twitch's TV app (its sound goes on) */
+var PREVIEW = onOffCard('pip', 'Keep Preview on Channel Page', keepPreview, setKeepPreview,
+    'On a channel\'s page, its live preview stays in view beside the header while you browse its videos.',
+    'On a channel\'s page, the header covers its live preview while you browse its videos, as in Twitch\'s TV app.');
 
-var SETTINGS = [NOTICES, EMOTES, CHAT, DIM, PREVIEW, GATE, STABLE, POINTS, USHER].filter(function (s) { return s !== STABLE || canStabilize(); });
+/** The Favorites tab's rows above Latest Broadcasts; with both off the grid is the whole tab */
+var LIVE_ROW = onOffCard('rowlive', 'Live Now Row', showsLiveRow, setShowsLiveRow,
+    'Favorites shows the favorites that are live in a row of their own.', 'Favorites leaves the Live Now row out.');
+
+var ALL_ROW = onOffCard('rowall', 'All Favorites Row', showsAllRow, setShowsAllRow,
+    'Favorites shows every favorite in a row, live or not.',
+    'Favorites leaves the All Favorites row out; hold OK on a broadcast to manage its channel.');
+
+var FAV_PREVIEWS = onOffCard('pip', 'Favorites Previews', favoritePreviews, setFavoritePreviews,
+    'On Favorites, a past broadcast plays in its tile, with sound, once focus rests on it.',
+    'Favorites shows pictures only; OK still starts a past broadcast at once.');
+
+/** The check for new versions (api/version-check.ts), over the Version card: asked and told, or neither; the first
+ * choice's line says all a check sends */
+var CHECK: Setting = {
+    icon: 'update',
+    title: 'Check for New Versions',
+    values: ['notify', 'off'],
+    now: versionCheck,
+    set: function (v) { setVersionCheck(v as CheckMode); },
+    label: function (v) { return v === 'notify' ? 'Notify Me' : 'Off'; },
+    line: function (v) {
+        return v === 'notify' ? 'Sent once a day: its version, the ' + (android() ? 'Android' : 'webOS') +
+            ' version, the days since it last asked. Nothing about you or your TV.' : 'The app asks nothing.';
+    }
+};
 
 /** The remembered quality as Twitch names it (1080p60, 720p), or '' for none */
 function remembered(): string {
     var q = rememberedQuality();
     return q ? q.height + 'p' + (q.fps > 30 ? Math.round(q.fps) : '') : '';
+}
+
+/** A card on the page and what OK does on it: step a setting, open a Twitch page ('profile' or a QR page's id), or
+ * forget the remembered quality */
+interface Entry {
+    setting?: Setting;
+    open?: string;
+    quality?: boolean;
 }
 
 export class SettingsView implements Screen {
@@ -146,23 +180,36 @@ export class SettingsView implements Screen {
     /** Twitch shows only Go Back over it (no menu items) */
     menu: MenuMode = 'back';
     private cards: CardList;
-    /** The first Bolli card */
-    private bolli: number;
+    /** Each card's entry, in the page's order */
+    private entries: Entry[] = [];
+    /** The Remembered Quality card and the Version card */
+    private quality = -1;
+    private version = -1;
     /** The live chat settings page, once opened */
     private chatPage: ChatSettings | null = null;
 
     constructor(private nav: Navigator) {
         this.el = h('div', 'bt-settings');
         this.cards = new CardList(TOP);
+        this.add(PROFILE, { open: 'profile' });
+        this.quality = this.cards.length;
+        this.add({ icon: 'quality', title: 'Remembered Quality', line: '', heading: 'Playback' }, { quality: true });
+        // Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there)
+        this.group(null, canStabilize() ? [STABLE, DIM, USHER, PREVIEW, GATE] : [DIM, USHER, PREVIEW, GATE]);
+        this.group('Chat', [CHAT, NOTICES, POINTS]);
+        this.group('Favorites', [LIVE_ROW, ALL_ROW, FAV_PREVIEWS]);
         for (var i = 0; i < TWITCH.length; i++) {
-            this.cards.add(TWITCH[i]);
+            var card = TWITCH[i];
+            this.add({ icon: card.icon, title: card.title, line: card.line, heading: i === 0 ? 'Twitch' : undefined }, { open: card.id });
         }
-        this.bolli = this.cards.length;
-        for (var k = 0; k < SETTINGS.length; k++) {
-            this.cards.add({ icon: SETTINGS[k].icon, title: SETTINGS[k].title, line: '', heading: k === 0 ? 'Bolli Twitch' : undefined });
+        // The app's own two cards, after a blank heading's room so they do not read as Twitch's
+        var apart = ' ';
+        if (hasVersionCheck()) {
+            this.group(apart, [CHECK]);
+            apart = '';
         }
-        this.cards.add({ icon: 'quality', title: 'Remembered Quality', line: '' });
-        this.cards.add({ icon: 'version', title: 'Version', line: 'Bolli Twitch ' + (document.documentElement.getAttribute('data-version') || '') });
+        this.version = this.cards.length;
+        this.add({ icon: 'version', title: 'Version', line: '', heading: apart || undefined }, {});
         this.el.appendChild(this.cards.el);
         this.el.appendChild(h('div', 'bt-set-cover'));
         setShown(this.el, false);
@@ -171,7 +218,7 @@ export class SettingsView implements Screen {
 
     show(): void {
         setShown(this.el, true);
-        // The player may have remembered a quality meanwhile
+        // The player may have remembered a quality meanwhile, the day's check named a newer version
         this.label();
         loadQr().then(null, function () { /* tried again by the QR page */ });
     }
@@ -199,12 +246,12 @@ export class SettingsView implements Screen {
             }
             return true;
         }
-        var i = this.cards.index;
         if (code === KEY.UP || code === KEY.DOWN) {
             // Up from the first card is the shell's (the menu)
             return this.cards.move(code === KEY.UP ? -1 : 1) || code === KEY.DOWN;
         }
-        var setting = SETTINGS[i - this.bolli];
+        var entry = this.entries[this.cards.index];
+        var setting = entry.setting;
         if (setting && setting.page) {
             if (code === KEY.OK) {
                 this.chatPage = this.chatPage || new ChatSettings(this.el);
@@ -221,16 +268,29 @@ export class SettingsView implements Screen {
         if (code !== KEY.OK) {
             return false;
         }
-        if (i < TWITCH.length) {
-            var id = TWITCH[i].id;
-            this.nav.push(id === 'profile' ? new ProfileView(this.nav) : new QrPage(SETTINGS_PAGES[id], this.nav));
+        if (entry.open) {
+            this.nav.push(entry.open === 'profile' ? new ProfileView(this.nav) : new QrPage(SETTINGS_PAGES[entry.open], this.nav));
         } else if (setting) {
             this.step(setting, 1);
-        } else if (i === this.bolli + SETTINGS.length && remembered()) {
+        } else if (entry.quality && remembered()) {
             rememberQuality(null);
             this.label();
         }
         return true;
+    }
+
+    /** A card and its entry */
+    private add(card: Card, entry: Entry): void {
+        this.cards.add(card);
+        this.entries.push(entry);
+    }
+
+    /** Settings' cards, the first under a heading (null: none) */
+    private group(heading: string | null, settings: Setting[]): void {
+        for (var k = 0; k < settings.length; k++) {
+            this.add({ icon: settings[k].icon, title: settings[k].title, line: '', heading: k === 0 && heading ? heading : undefined },
+                { setting: settings[k] });
+        }
     }
 
     /** The setting's next choice (delta 1) or the one before (-1), round */
@@ -240,15 +300,21 @@ export class SettingsView implements Screen {
         this.label();
     }
 
-    /** The Bolli cards' values and lines as stored now */
+    /** The settings' values and lines as stored now; the Version card names a newer version that is out, and on webOS
+     * where it is updated */
     private label(): void {
-        for (var k = 0; k < SETTINGS.length; k++) {
-            var s = SETTINGS[k];
-            var v = s.now();
-            this.cards.update(this.bolli + k, s.title, s.line(v), s.label(v));
+        for (var k = 0; k < this.entries.length; k++) {
+            var s = this.entries[k].setting;
+            if (s) {
+                var v = s.now();
+                this.cards.update(k, s.title, s.line(v), s.label(v));
+            }
         }
         var q = remembered();
-        this.cards.update(this.bolli + SETTINGS.length, 'Remembered Quality', q ? 'New streams start at ' + q + '. OK forgets it: they start at Auto.' :
+        this.cards.update(this.quality, 'Remembered Quality', q ? 'New streams start at ' + q + '. OK forgets it: they start at Auto.' :
             'New streams start at Auto: no quality is remembered.', q || 'Auto');
+        var newer = newerVersion();
+        this.cards.update(this.version, 'Version', 'Bolli Twitch ' + (document.documentElement.getAttribute('data-version') || '') +
+            (newer ? '. Version ' + newer + ' is out.' + updateHint() : ''), '');
     }
 }

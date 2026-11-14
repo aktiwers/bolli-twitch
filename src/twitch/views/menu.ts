@@ -1,10 +1,10 @@
 // The top menu of every page, as Twitch's TV app has it: the logo at the left (the Bolli logo here, not focusable),
 // the items centred (a guest: Sign In, Home, Browse, Search; signed in: Home, Following, Browse, Search) and the gear
-// (Settings) at the right. The current page's item is lit; focus is the light box with the purple ring. Left/Right
-// walk the items without wrapping; OK picks one; Down leaves the menu (the shell gives focus back to the page).
-// On a page opened over a section, Go Back stands in place of the logo as the first item focus reaches (Up from
-// the page lands on it); a page such as Settings shows Go Back alone, without the items (MenuMode). Focus resting on
-// an item is told (the shell fetches Browse ahead).
+// (Settings) at the right; Bolli's Favorites stands after Home for both. The current page's item is lit; focus is the
+// light box with the purple ring. Left/Right walk the items without wrapping; OK picks one; Down leaves the menu (the
+// shell gives focus back to the page). On a page opened over a section, Go Back stands in place of the logo as the
+// first item focus reaches (Up from the page lands on it); a page such as Settings shows Go Back alone, without the
+// items (MenuMode). Focus resting on an item is told (the shell fetches Browse ahead and builds Favorites).
 
 import { h, toggleClass } from '../../core/dom.js';
 import { KEY } from '../../core/keys.js';
@@ -12,13 +12,16 @@ import { chevronIcon, gearIcon } from './icons.js';
 import { MenuMode } from './navigator.js';
 import { REST_LONG_MS } from './rest.js';
 
-export type MenuItem = 'signin' | 'home' | 'following' | 'browse' | 'search' | 'settings';
+export type MenuItem = 'signin' | 'home' | 'favorites' | 'following' | 'browse' | 'search' | 'settings';
 /** What focus walks: Go Back, then the items */
 type Entry = MenuItem | 'back';
 
-var LABELS: { [name: string]: string } = { signin: 'Sign In', home: 'Home', following: 'Following', browse: 'Browse', search: 'Search' };
-var GUEST: MenuItem[] = ['signin', 'home', 'browse', 'search', 'settings'];
-var SIGNED_IN: MenuItem[] = ['home', 'following', 'browse', 'search', 'settings'];
+/** The items' words, in the order they stand */
+var LABELS: { [name: string]: string } = {
+    signin: 'Sign In', home: 'Home', favorites: 'Favorites', following: 'Following', browse: 'Browse', search: 'Search'
+};
+var GUEST: MenuItem[] = ['signin', 'home', 'favorites', 'browse', 'search', 'settings'];
+var SIGNED_IN: MenuItem[] = ['home', 'favorites', 'following', 'browse', 'search', 'settings'];
 
 export class TopMenu {
     el: HTMLElement;

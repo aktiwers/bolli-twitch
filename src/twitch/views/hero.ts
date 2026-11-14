@@ -6,7 +6,7 @@
 // them at once). Pictures focus can reach next are fetched ahead, so they come from the cache when it moves there.
 
 import { h, setShown, setText, toggleClass } from '../../core/dom.js';
-import { previewAt, sized } from '../api/pictures.js';
+import { previewAt, wideAt } from '../api/pictures.js';
 import { Item, Stream } from '../api/types.js';
 import { blankBoxIcon } from './icons.js';
 import { ago, setSource } from './tiles.js';
@@ -49,7 +49,7 @@ export function heroOf(item: Item): HeroModel {
     }
     if (item.kind === 'video' || item.kind === 'clip') {
         var still = item.kind === 'video' ? item.video.preview : item.clip.thumbnail;
-        return { picture: still ? sized(still, HERO_WIDTH, Math.round(HERO_WIDTH * 9 / 16)) : '', art: '', live: false, line1: '', line2: '' };
+        return { picture: still ? wideAt(still, HERO_WIDTH) : '', art: '', live: false, line1: '', line2: '' };
     }
     var s: Stream | undefined = item.kind === 'stream' ? item.stream : item.game.topStream;
     if (!s) {

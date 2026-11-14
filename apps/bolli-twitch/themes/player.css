@@ -27,6 +27,13 @@
 .bt-pl-shade { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: linear-gradient(rgba(0, 0, 0, .4) 0%, #000 88.43%);
                -webkit-transition: opacity .25s ease-in-out; transition: opacity .25s ease-in-out; }
 .bt-pl--idle .bt-pl-shade { opacity: 0; }
+/* The still behind the loading sign while the player starts (views/player/still.ts): filling the picture's box, on
+   black so a picture still coming in is never drawn squeezed; display:none when not shown (an opaque layer at opacity
+   0 over the video stops the TV drawing it). With Settings' start dim on, the shade stays over it while it shows */
+.bt-pl-still { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000; background-position: center;
+               background-repeat: no-repeat; -webkit-background-size: cover; background-size: cover; }
+.bt-pl-still--out { opacity: 0; -webkit-transition: opacity .3s ease; transition: opacity .3s ease; }
+.bt-pl--stilldim .bt-pl-shade { opacity: 1; }
 .bt-pl-back { position: absolute; left: 48px; top: 36px; }
 
 /* The channel: avatar (LIVE under it), name, title, and game | uptime | viewers (or date | views) */

@@ -281,8 +281,9 @@ function trafSize(track: Track): number {
 }
 
 /** The merged segment, or null when a track's values cannot be carried over (stated for only some samples, or an
- * unsigned composition offset a signed trun cannot hold) */
-function write(tracks: Track[], mfhd: Uint8Array): ArrayBuffer | null {
+ * unsigned composition offset a signed trun cannot hold). pad: its moof made that many bytes with a free box at its
+ * end (null when it does not fit) */
+function write(tracks: Track[], mfhd: Uint8Array, pad?: number): ArrayBuffer | null {
     var moofSize = 8 + mfhd.length;
     var bytes = 0;
     var t: number;
@@ -295,6 +296,11 @@ function write(tracks: Track[], mfhd: Uint8Array): ArrayBuffer | null {
         moofSize += trafSize(track);
         bytes += track.bytes;
     }
+    var free = pad ? pad - moofSize : 0;
+    if (free < 0 || (free > 0 && free < 8)) {
+        return null;
+    }
+    moofSize += free;
     var out = new Uint8Array(moofSize + 8 + bytes);
     var p = header(out, 0, moofSize, 'moof');
     out.set(mfhd, p);
@@ -342,6 +348,9 @@ function write(tracks: Track[], mfhd: Uint8Array): ArrayBuffer | null {
         }
         offset += track.bytes;
     }
+    if (free) {
+        p = header(out, p, free, 'free') + free - 8;
+    }
     p = header(out, p, 8 + bytes, 'mdat');
     for (t = 0; t < tracks.length; t++) {
         var data = tracks[t].data;
@@ -354,8 +363,8 @@ function write(tracks: Track[], mfhd: Uint8Array): ArrayBuffer | null {
 }
 
 /** The segment in buf as one moof and one mdat when it holds several moofs and every part of it can be carried over,
- * else buf itself */
-export function mergeChunks(buf: ArrayBuffer): ArrayBuffer {
+ * else buf itself. pad: with a moof of that many bytes (also a segment of one moof; buf itself when it does not fit) */
+export function mergeChunks(buf: ArrayBuffer, pad?: number): ArrayBuffer {
     var u = new Uint8Array(buf);
     var top = boxes(u, 0, u.length);
     if (!top) {
@@ -370,7 +379,7 @@ export function mergeChunks(buf: ArrayBuffer): ArrayBuffer {
             mdats.push(top[i]);
         }
     }
-    if (moofs.length < 2) {
+    if (moofs.length < (pad ? 1 : 2)) {
         return buf;
     }
     var tracks: Track[] = [];
@@ -392,5 +401,78 @@ export function mergeChunks(buf: ArrayBuffer): ArrayBuffer {
             }
         }
     }
-    return mfhd && tracks.length ? write(tracks, mfhd) || buf : buf;
+    return mfhd && tracks.length ? write(tracks, mfhd, pad) || buf : buf;
+}
+
+/** A sample's flags say it needs others to decode (not a keyframe) */
+var NON_SYNC = 0x10000;
+
+/** The start of a chunked segment as its first bytes (buf) hold it, cut where its second group of pictures begins:
+ * the chunks before the first later chunk whose video begins with a keyframe, as one fragment (part), and the bytes
+ * from that chunk on (rest: with the rest of the segment they merge as a segment does, a fragment that begins with a
+ * keyframe too, as this TV's Media Source wants every fragment). The video track is the one whose samples state
+ * their flags, some of them not keyframes. null when buf does not hold that: no later chunk whole in it whose video
+ * begins with a keyframe, chunks that do not merge, no such track */
+export function firstGroup(buf: ArrayBuffer): { part: ArrayBuffer; rest: Uint8Array } | null {
+    var u = new Uint8Array(buf);
+    // The boxes whole in buf (the last one usually is not)
+    var top: Box[] = [];
+    for (var p = 0; p + 8 <= u.length;) {
+        var size = u32(u, p);
+        if (size < 8 || p + size > u.length) {
+            break;
+        }
+        top.push({ type: String.fromCharCode(u[p + 4], u[p + 5], u[p + 6], u[p + 7]), start: p, end: p + size });
+        p += size;
+    }
+    var mdats: Box[] = [];
+    for (var i = 0; i < top.length; i++) {
+        if (top[i].type === 'mdat') {
+            mdats.push(top[i]);
+        }
+    }
+    var tracks: Track[] = [];
+    /** Per whole chunk: where it ends, and how many samples each track had before it */
+    var ends: number[] = [];
+    var before: { [id: number]: number }[] = [];
+    for (i = 0; i + 1 < top.length; i++) {
+        if (top[i].type !== 'moof' || top[i + 1].type !== 'mdat') {
+            continue;
+        }
+        var counts: { [id: number]: number } = {};
+        for (var t = 0; t < tracks.length; t++) {
+            counts[tracks[t].id] = tracks[t].count;
+        }
+        var inner = boxes(u, top[i].start + 8, top[i].end);
+        if (!inner) {
+            return null;
+        }
+        var end = top[i].start;
+        for (var k = 0; k < inner.length; k++) {
+            if (inner[k].type === 'traf' && (end = gather(u, inner[k], top[i].start, end, mdats, tracks)) < 0) {
+                return null;
+            }
+        }
+        ends.push(top[i + 1].end);
+        before.push(counts);
+    }
+    var video: Track | null = null;
+    for (t = 0; t < tracks.length && !video; t++) {
+        var s = tracks[t].samples;
+        for (var n = 2; tracks[t].flags === tracks[t].count && n < s.length && !video; n += 4) {
+            video = s[n] & NON_SYNC ? tracks[t] : null;
+        }
+    }
+    if (!video) {
+        return null;
+    }
+    for (var c = 1; c < ends.length; c++) {
+        var first = before[c][video.id];
+        if (first > 0 && first < video.count && !(video.samples[first * 4 + 2] & NON_SYNC)) {
+            var head = buf.slice(0, ends[c - 1]);
+            var part = mergeChunks(head);
+            return part === head && c > 1 ? null : { part: part, rest: u.subarray(ends[c - 1]) };
+        }
+    }
+    return null;
 }

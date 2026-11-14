@@ -5,6 +5,7 @@
 // them all.
 
 import { gql } from './gql.js';
+import { Listeners } from './listeners.js';
 import { Raw } from './parse.js';
 
 export type FollowKind = 'channel' | 'game';
@@ -22,7 +23,7 @@ var NOT_INTERESTED = 'mutation NotInterested($input: AddRecommendationFeedbackIn
 export type FollowListener = (kind: FollowKind | null, id: string, on: boolean | undefined) => void;
 
 var states: { [key: string]: boolean } = {};
-var listeners: FollowListener[] = [];
+var listeners = new Listeners<[FollowKind | null, string, boolean | undefined]>();
 
 function keyOf(kind: FollowKind, id: string): string {
     return kind + ':' + id;
@@ -40,32 +41,19 @@ export function noteFollow(kind: FollowKind, id: string, on: boolean): void {
         return;
     }
     states[key] = on;
-    tell(kind, id, on);
+    listeners.tell(kind, id, on);
 }
 
 /** listener(kind, id, on) after every change, listener(null, '', undefined) when every state is forgotten; returns
  * the function that stops it */
 export function onFollowChange(listener: FollowListener): () => void {
-    listeners.push(listener);
-    return function (): void {
-        var i = listeners.indexOf(listener);
-        if (i >= 0) {
-            listeners.splice(i, 1);
-        }
-    };
+    return listeners.on(listener);
 }
 
 /** Forgets every state (the account changed); listeners hear it, so no button keeps the last account's state */
 export function forgetFollows(): void {
     states = {};
-    tell(null, '', undefined);
-}
-
-function tell(kind: FollowKind | null, id: string, on: boolean | undefined): void {
-    var all = listeners.slice();
-    for (var i = 0; i < all.length; i++) {
-        all[i](kind, id, on);
-    }
+    listeners.tell(null, '', undefined);
 }
 
 /** Follows (on) or unfollows a channel or category; whether the account follows it now. Rejects with the GqlError */

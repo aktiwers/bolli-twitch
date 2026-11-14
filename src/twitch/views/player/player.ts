@@ -16,7 +16,8 @@
 // (the channel page of the same stream claims it; under the options page it pauses) and its chat, timers and ticks
 // rest; shown again it claims it back where it stands (also from the channel page's preview of the same video). It
 // stops the playback only when it goes and still owns it. Where the viewer is in a past broadcast is kept every 15 s
-// while it shows, when it goes out of sight and when the app goes to the background.
+// while it shows, when it goes out of sight and when the app goes to the background. Until its picture first moves,
+// a still of it (its tile's picture, then a sharper one) shows behind the loading sign (still.ts).
 
 import { h, setShown, setText, toggleClass, translate } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
@@ -26,7 +27,7 @@ import { ClipFile } from '../../api/clip.js';
 import { GqlError } from '../../api/gql.js';
 import { followState, noteFollow } from '../../api/follow.js';
 import { signedIn } from '../../api/gql.js';
-import { avatarAt } from '../../api/pictures.js';
+import { avatarAt, stillsOf } from '../../api/pictures.js';
 import { Channel, Clip, Item, LiveUpdate, Stream, Video } from '../../api/types.js';
 import { Failure } from '../../player/engine.js';
 import { Box, PlayOptions, SessionEvents, Target } from '../../player/session.js';
@@ -42,6 +43,7 @@ import { ago } from '../tiles.js';
 import { chatHidden, ChatLayout, chatLayout, lifted, setChatHidden, WHOLE } from './chat-choice.js';
 import { ChatSettings } from './chat-settings.js';
 import { startDim } from './start-dim.js';
+import { Still } from './still.js';
 import { Direction, FocusGraph, Links } from './focus.js';
 import { uptime, viewers, views } from './format.js';
 import { acceptGate, gatePassed } from './gate.js';
@@ -105,6 +107,8 @@ export interface PlayerSession {
     play(target: Target, events: SessionEvents, options?: PlayOptions): void;
     leave(events: SessionEvents): void;
     stop(): void;
+    /** The player closes: a past broadcast is kept a while for it to open again, anything else stops */
+    keep(events: SessionEvents): void;
     owns(events: SessionEvents): boolean;
     /** Whether target plays now (for any screen; not a failed playback) */
     plays(target: Target): boolean;
@@ -265,6 +269,9 @@ export class PlayerView implements Screen {
     private liveAskedAt = Date.now();
     /** Focus resting on the avatar: the channel's page fetched ahead */
     private rest = new Rest();
+    /** The still behind the loading sign until the picture first moves, and its picture's address (the tile's) */
+    private still: Still;
+    private stillUrl = '';
 
     private controls: HTMLElement;
     /** Where the picture is: its play sign, spinner and the overlay's shade */
@@ -304,6 +311,7 @@ export class PlayerView implements Screen {
             this.gated = !!s.mature;
             this.restricted = !!s.restricted;
             this.target = { kind: 'live', id: s.channel.login };
+            this.stillUrl = s.preview;
             this.watched = { login: s.channel.login, channelId: s.channel.id, broadcastId: s.id, game: s.game ? s.game.name : '' };
         } else if (item.kind === 'vod') {
             var v = item.video;
@@ -313,6 +321,7 @@ export class PlayerView implements Screen {
             this.restricted = !!v.restricted;
             this.resumeAt = item.startAt !== undefined ? item.startAt : startOf(v);
             this.target = { kind: 'vod', id: v.id };
+            this.stillUrl = v.preview;
         } else {
             var c = item.clip;
             this.channel = c.channel;
@@ -325,6 +334,7 @@ export class PlayerView implements Screen {
             this.videoId = c.videoId || '';
             this.videoOffset = c.videoOffset || 0;
             this.target = { kind: 'clip', id: c.slug };
+            this.stillUrl = c.thumbnail;
         }
         // Streams, tiles and pages say whether Twitch gates them; a clip's own page, which comes before it plays,
         // says it again; a past broadcast opened from a clip's Watch Full Video waits for its page (it may be
@@ -336,14 +346,17 @@ export class PlayerView implements Screen {
         this.events = {
             playing: function () {
                 self.played = true;
+                self.still.moving(true);
                 self.askEmotes();
                 self.setBuffering(false);
                 self.setPaused(false);
             },
             buffering: function () {
+                self.still.moving(false);
                 self.setBuffering(true);
             },
             paused: function () {
+                self.still.moving(false);
                 self.setPaused(true);
             },
             ended: function () {
@@ -371,6 +384,11 @@ export class PlayerView implements Screen {
         };
         this.el = h('div', 'bt-pl bt-pl--' + this.kind);
         var box = this.picture = this.el.appendChild(h('div', 'bt-pl-box')) as HTMLElement;
+        // The still under the shade: dimmed by it while it shows with Settings' start dim on, as the open dims
+        this.still = new Still(function () { return self.deps.session.position(); }, function (on: boolean) {
+            toggleClass(self.el, 'bt-pl--stilldim', on && startDim());
+        });
+        box.appendChild(this.still.el);
         // The shade over the picture fades with the overlay; on the picture's layer, under chat placed over the
         // picture and under the controls
         box.appendChild(h('div', 'bt-pl-shade'));
@@ -525,6 +543,7 @@ export class PlayerView implements Screen {
         clearInterval(this.keepTimer);
         this.ticking(false);
         clearTimeout(this.hideTimer);
+        this.still.moving(false);
     }
 
     destroy(): void {
@@ -534,6 +553,7 @@ export class PlayerView implements Screen {
         this.ticking(false);
         clearTimeout(this.hideTimer);
         this.rest.cancel();
+        this.still.drop();
         this.follow.destroy();
         if (this.chat) {
             this.chat.close();
@@ -541,9 +561,15 @@ export class PlayerView implements Screen {
         if (this.watch) {
             this.watch.stop();
         }
-        // The screen under it (the channel page) may have taken the same playback back already
+        // The screen under it (the channel page) may have taken the same playback back already. A past broadcast is
+        // kept a while (Back by mistake, a look at the page: opened again it plays on where it stood); not one that
+        // ended or waits behind a prompt
         if (this.deps.session.owns(this.events)) {
-            this.deps.session.stop();
+            if (this.kind === 'vod' && !this.over && !this.gated) {
+                this.deps.session.keep(this.events);
+            } else {
+                this.deps.session.stop();
+            }
         }
     }
 
@@ -626,6 +652,7 @@ export class PlayerView implements Screen {
     }
 
     private setVideo(v: Video): void {
+        this.offerStill(v.preview);
         this.game = v.game ? v.game.displayName : '';
         this.date = v.publishedAt;
         this.views = v.views;
@@ -642,6 +669,7 @@ export class PlayerView implements Screen {
     /** Plays the target: claimed where it stands when the session plays it already (its own playback, or the channel
      * page's preview of the same video), else started (a past broadcast where the viewer was) */
     private start(): void {
+        this.openStill();
         if (this.kind === 'clip') {
             this.startClip();
             return;
@@ -668,12 +696,31 @@ export class PlayerView implements Screen {
         s.play(target, this.events, {});
     }
 
+    /** Opening with no moving picture yet: the still behind the loading sign (not over a playback handed over that
+     * plays already, nor once this player's picture has moved) */
+    private openStill(): void {
+        var s = this.deps.session;
+        if (this.played || this.still.shown || s.plays(this.target) && s.pictureRuns()) {
+            return;
+        }
+        this.still.open(stillsOf(this.stillUrl));
+    }
+
+    /** A page came with the picture a player opened without (Watch Full Video, a clip opened by its name) */
+    private offerStill(url: string): void {
+        if (url && !this.stillUrl) {
+            this.stillUrl = url;
+            this.still.offer(stillsOf(url));
+        }
+    }
+
     private loadClip(): void {
         var self = this;
         this.clipFile = this.deps.clip(this.target.id);
         this.clipFile.then(function (c: ClipFile) {
             self.videoId = c.clip.videoId || '';
             self.videoOffset = c.clip.videoOffset || 0;
+            self.offerStill(c.clip.thumbnail);
             // No broadcast to go to: no Watch Full Video, as in Twitch's app
             toggleClass(self.el, 'bt-pl--nofull', !self.videoId);
             if (self.track) {
@@ -1239,6 +1286,7 @@ export class PlayerView implements Screen {
     private showOver(model: PromptModel): void {
         this.inBreak = false;
         this.over = true;
+        this.still.drop();
         this.quality.close();
         this.drawFocus();
         this.prompt.set(model);

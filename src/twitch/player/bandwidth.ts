@@ -53,20 +53,19 @@ export function lowerTo(q: Quality): void {
     nativeCap = Math.min(nativeBandwidth(), q.bandwidth / SHARE);
 }
 
-/** The best quality the line allows (an index in list, best first): the first whose bandwidth fits and whose
- * picture is at most maxHeight tall (0: any), else the lowest */
-export function fitQuality(list: Quality[], bps: number, maxHeight?: number): number {
+/** The best quality the line allows (an index in list, best first): the first whose bandwidth fits, else the
+ * lowest */
+export function fitQuality(list: Quality[], bps: number): number {
     for (var i = 0; i < list.length; i++) {
-        if (list[i].bandwidth <= bps * SHARE && (!maxHeight || list[i].height <= maxHeight)) {
+        if (list[i].bandwidth <= bps * SHARE) {
             return i;
         }
     }
     return list.length - 1;
 }
 
-/** The quality picked (an index in list, -1 Auto) as it counts under maxHeight (0: any): one taller than that plays
- * as Auto, which keeps under it (a preview never decodes the remembered 1080p60) */
-export function pickUnder(list: Quality[], picked: number, maxHeight: number): number {
-    var q = list[picked];
-    return q && (!maxHeight || q.height <= maxHeight) ? picked : -1;
+/** The quality a Media Source start plays first (an index in list): the picked one, in Auto the best the line allows
+ * (the engine's own choice, so a playlist or segment fetched for it ahead is the one it asks) */
+export function startQuality(list: Quality[], picked: number): number {
+    return picked >= 0 ? picked : fitQuality(list, bandwidth());
 }

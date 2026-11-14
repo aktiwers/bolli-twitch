@@ -6,11 +6,12 @@
 // or top, the picture whole above or below it or zoomed to the screen's width) or over it (at the right or left at a
 // height, along the bottom, or in a box of the viewer's own); a strip as a ticker, a band of lines or one message at
 // a time; its size, its background over the video, each message's time and its sender's picture, and old messages
-// fading.
+// fading. Those are stored with the chat (chat/prefs.ts).
 
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH } from '../../../core/dom.js';
 import { load, save } from '../../../core/store.js';
 import { ChatMode, PanelLayout } from '../../chat/panel.js';
+import { chatPref } from '../../chat/prefs.js';
 import { Box } from '../../player/session.js';
 
 /** The stored layout: true when chat shows over the video */
@@ -29,40 +30,6 @@ export function chatOver(): boolean {
 export function setChatOver(on: boolean): void {
     over = on;
     save(OVER_KEY, on);
-}
-
-/** The chat's settings, each with its values (the first the default): beside the video its side; over it its
- * position and its height at a side; a strip's style, and the picture beside a strip */
-export type ChatPref = 'chatSide' | 'chatPosition' | 'chatHeight' | 'chatBottom' | 'chatPicture' | 'chatSize' | 'chatBackground' | 'chatTimes' |
-    'chatAvatars' | 'chatFade';
-export type ChatValue = string | number | boolean;
-export var CHAT_VALUES: { [name in ChatPref]: ChatValue[] } = {
-    chatSide: ['right', 'left', 'bottom', 'top'],
-    chatPosition: ['right', 'left', 'bottom', 'custom'],
-    chatHeight: ['tall', 'full', 'half'],
-    chatBottom: ['ticker', 'band', 'one'],
-    chatPicture: ['fit', 'fill'],
-    chatSize: ['medium', 'tiny', 'small', 'large'],
-    chatBackground: ['panel', 'bubbles', 'none'],
-    chatTimes: [false, true],
-    chatAvatars: [false, true],
-    chatFade: [0, 15, 30, 60]
-};
-var PREF_KEY = 'twitch.player.';
-var kept: { [name: string]: ChatValue } = {};
-
-/** A setting's value: the stored one when it is one of its values, else its default */
-export function chatPref(name: ChatPref): ChatValue {
-    if (!(name in kept)) {
-        var stored = load<ChatValue>(PREF_KEY + name);
-        kept[name] = stored !== null && CHAT_VALUES[name].indexOf(stored) >= 0 ? stored : CHAT_VALUES[name][0];
-    }
-    return kept[name];
-}
-
-export function setChatPref(name: ChatPref, value: ChatValue): void {
-    kept[name] = value;
-    save(PREF_KEY + name, value);
 }
 
 /** How large each size draws the chat (text, badges, emotes; over the video its width, a strip its height) next to

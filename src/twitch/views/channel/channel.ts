@@ -1,10 +1,11 @@
 // A channel's page as Twitch's TV app lays it out: the header band (round avatar, LIVE NOW or OFFLINE, the name,
-// followers, "About <name>:" and the description in at most four lines, Follow and Report), the preview box at the
-// right with Watch Live (offline: Watch Latest Video) under it, and the channel's rows below (Twitch's own, in its
-// order and words). Focus starts on Follow. In the header Left/Right walk the buttons, Down goes to the first row and
-// Up to the menu's Go Back; in the rows Up from the first one goes back to the header button it came from. Focus in
-// the rows shrinks the header to the avatar and the three lines (the rest fades out in .25 s, the rows move up after
-// .1 s) and keeps the focused row's title at y 300; going back up grows it again in .2 s.
+// followers, "About <name>:" and the description in at most four lines, Follow and Report, and between them Bolli's
+// Favorite, which keeps the channel on the Favorites tab), the preview box at the right with Watch Live (offline: Watch
+// Latest Video) under it, and the channel's rows below (Twitch's own, in its order and words). Focus starts on Follow.
+// In the header Left/Right walk the buttons, Down goes to the first row and Up to the menu's Go Back; in the rows Up
+// from the first one goes back to the header button it came from. Focus in the rows shrinks the header to the avatar
+// and the three lines (the rest fades out in .25 s, the rows move up after .1 s) and keeps the focused row's title at
+// y 300; going back up grows it again in .2 s.
 // Unlike Twitch's app the page stays alive under what it opens: Back from a player finds the tile or button that was
 // opened, still focused (Twitch's app loads the page anew, focus on Follow), and the preview goes on playing into the
 // full-screen player of the same target and back (the session hands it over); under a page that plays nothing it
@@ -22,6 +23,7 @@ import { avatarAt } from '../../api/pictures.js';
 import { Channel, Item, Shelf } from '../../api/types.js';
 import { keyOf, Target } from '../../player/session.js';
 import { Confirm } from '../confirm.js';
+import { FavoriteStar } from '../favorites/star.js';
 import { Follow } from '../follow.js';
 import { playIcon, reportIcon } from '../icons.js';
 import { Navigator, Screen } from '../navigator.js';
@@ -67,6 +69,7 @@ export class ChannelView implements Screen {
     private aboutTitle: HTMLElement;
     private about: HTMLElement;
     private follow: Follow;
+    private star = new FavoriteStar('bt-ch-button');
     private reportButton: Button;
     private watchButton: Button;
     private preview: Preview;
@@ -110,6 +113,7 @@ export class ChannelView implements Screen {
         var buttons = this.more.appendChild(h('div', 'bt-ch-buttons')) as HTMLElement;
         this.follow = new Follow('bt-ch-button', nav, this.confirm);
         buttons.appendChild(this.follow.el);
+        buttons.appendChild(this.star.el);
         this.reportButton = makeButton(buttons, 'Report', reportIcon());
         var self = this;
         this.preview = new Preview(deps.player, function (target: Target) {
@@ -167,6 +171,7 @@ export class ChannelView implements Screen {
         this.gone = true;
         this.backoff.cancel();
         this.follow.destroy();
+        this.star.destroy();
         this.rest.cancel();
         this.preview.drop();
         this.stack.clear();
@@ -270,12 +275,12 @@ export class ChannelView implements Screen {
         return false;
     }
 
-    /** The header's buttons focus walks: Follow, Report and Watch once the page is in */
+    /** The header's buttons focus walks: Follow, then Favorite, Report and Watch once the page is in */
     private buttons(): HTMLElement[] {
         if (!this.page) {
             return [this.follow.el];
         }
-        var list = [this.follow.el, this.reportButton.el];
+        var list = [this.follow.el, this.star.el, this.reportButton.el];
         if (this.page.stream || this.page.latest) {
             list.push(this.watchButton.el);
         }
@@ -289,6 +294,8 @@ export class ChannelView implements Screen {
         }
         if (button === this.follow.el) {
             this.follow.press();
+        } else if (button === this.star.el) {
+            this.star.press();
         } else if (button === this.reportButton.el) {
             this.nav.push(new QrPage(reportChannel(page.channel.login), this.nav));
         } else if (page.stream) {
@@ -320,7 +327,7 @@ export class ChannelView implements Screen {
         var lost = this.failed && !this.page;
         var open = this.confirm.open;
         var at = this.focused && !this.inRows && !open && !lost ? this.buttons()[this.button] : null;
-        var all = [this.follow.el, this.reportButton.el, this.watchButton.el];
+        var all = [this.follow.el, this.star.el, this.reportButton.el, this.watchButton.el];
         for (var i = 0; i < all.length; i++) {
             toggleClass(all[i], 'bt-focused', all[i] === at);
         }
@@ -400,10 +407,11 @@ export class ChannelView implements Screen {
         this.mark();
     }
 
-    /** The header's top lines and Follow: from the opener's channel at once, then from the page */
+    /** The header's top lines, Follow and Favorite: from the opener's channel at once, then from the page */
     private drawChannel(live: boolean): void {
         var c = this.channel;
         this.follow.set({ kind: 'channel', id: c.id, name: c.displayName });
+        this.star.set(c);
         setSource(this.avatar, avatarAt(c.avatar, 150));
         setText(this.status, live ? 'LIVE NOW' : 'OFFLINE');
         toggleClass(this.status, 'bt-ch-status--live', live);

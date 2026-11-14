@@ -9,11 +9,18 @@ export var KEPT = 30;
 
 export type Part =
     { kind: 'text'; text: string } |
-    /** ratio: a third-party emote's width over its height (none: square); over: drawn over the emote before it */
-    { kind: 'emote'; name: string; url: string; ratio?: number; over?: boolean } |
+    /** id: Twitch's id of an emote the chat line places (none: a third-party emote, named by its word); ratio: a
+     * third-party emote's width over its height (none: square); over: drawn over the emote before it, gap: the spaces
+     * typed between the two, which it then takes the place of */
+    { kind: 'emote'; name: string; url: string; id?: string; ratio?: number; over?: boolean; gap?: string } |
     { kind: 'link'; text: string } |
     /** Words drawn in the link colour, as "Prime" in a sub notice */
     { kind: 'highlight'; text: string };
+
+export type EmotePart = Extract<Part, { kind: 'emote' }>;
+
+/** How the live chat settings show an emote: as its picture, as the word that was typed, or left out */
+export type EmoteShow = 'pictures' | 'text' | 'hidden';
 
 /** A third-party emote as chat draws it (chat/emotes.ts) */
 export interface ChatEmote {
@@ -61,6 +68,6 @@ export interface ChatEvents {
     /** Messages deleted: these ids, or all of a login's (timeouts, bans), or the whole chat (neither) */
     removed(ids: string[] | null, login?: string): void;
     connected(on: boolean): void;
-    /** The connection moved to another channel: what was shown belongs to the last one */
-    reset(): void;
+    /** The connection moved to another channel (login): what was shown belongs to the last one */
+    reset(login: string): void;
 }

@@ -1,0 +1,53 @@
+/* Bolli Twitch: the Favorites tab, its cards and the channel's menu (colours and sizes: twitch.css; tiles and rows:
+   home.css; the menu's panel: pages.css). Bolli's own, in the measures of Twitch's TV app. */
+
+/* The tab: rows as Home's with the focused row's title at y 132, right under the menu; the page colour behind the
+   menu covers the rows that slid up */
+.bt-fav { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; }
+.bt-fav-band { position: absolute; left: 0; top: 0; width: 1280px; height: 126px; z-index: 1; background: #0e0e10; }
+/* Latest Broadcasts: a grid under the rows (four a row, as a category's channels), its title where a row has its own;
+   with focus in it the rows above slide away with its rows */
+.bt-fav-rows { position: absolute; left: 0; top: 0; width: 1280px; -webkit-transition: -webkit-transform .1s ease-in-out; }
+.bt-fav .bt-fav-latest { left: 0; top: -48px; }
+/* A past broadcast playing in its tile (grid-preview.ts): the app's video lies under the page, so the tile is clear
+   over its picture box (the picture down in place, not lifted: the lift would cross the tile's border and ring) and
+   its light colour is a frame around the box; the date, views and length stay over the video. Nothing opaque is left
+   over the box, not even at opacity 0 (the TV stops drawing a video under an opaque layer) */
+.bt-tile--preview.bt-tile--focused { background: transparent; }
+.bt-tile--preview.bt-tile--focused:before { content: ''; position: absolute; left: 0; top: 0; right: 0; bottom: 0; box-sizing: border-box;
+                                            border: solid #efeff1; border-width: 0 12px 84.67px; border-radius: 4.53px; }
+.bt-tile.bt-tile--preview .bt-tile-lift { -webkit-transform: translate3d(0, 0, 0); box-shadow: none; -webkit-transition: none; }
+.bt-tile--preview .bt-tile-img { visibility: hidden; }
+
+/* A favorite's card (148 wide, eight to a row): the avatar 120 round in a ring, red while live with LIVE over its
+   lower edge, else none and the picture grey; the name and a line centred under it */
+.bt-tile--fav { height: 196px; }
+.bt-tile--fav .bt-tile-lift { left: 11.33px; right: 11.33px; height: 120px; border-radius: 50%; }
+.bt-tile--fav .bt-tile-img { box-sizing: border-box; border: 3px solid transparent; border-radius: 50%; opacity: .55;
+                             -webkit-filter: grayscale(1); filter: grayscale(1); }
+.bt-tile--fav.bt-tile--live .bt-tile-img { border-color: #eb0400; opacity: 1; -webkit-filter: none; filter: none; }
+.bt-tile--fav .bt-live { display: none; left: 50%; top: auto; bottom: -7px; width: 44px; height: 18px; margin-left: -22px; padding: 0;
+                         font-size: 12px; line-height: 18px; text-align: center; }
+.bt-tile--fav.bt-tile--live .bt-live { display: block; }
+.bt-tile--fav .bt-tile-text { left: 8px; right: 8px; top: 136px; text-align: center; }
+
+/* Move: the carried tile lifted above the others (larger, a deep shadow under the focus ring), its neighbours sliding
+   to make room (transform only); the keys in a line at the right of the row's title */
+.bt-row--moving .bt-tile { -webkit-transition: -webkit-transform .1s ease-out; }
+.bt-tile--moving { z-index: 2; box-shadow: 0 0 0 3px #772ce8, 0 16px 32px 0 rgba(0, 0, 0, .7); }
+.bt-fav-hint { position: absolute; right: 48px; top: 132px; height: 24px; color: #adadb8; font-size: 15.6px; line-height: 20.16px;
+               white-space: nowrap; }
+/* A favorite not live among Live Now's streams while one is moved: the stream tile's size, its picture box dark with
+   the avatar grey in the middle, the text dimmed */
+.bt-tile--ghost { color: #6b6b74; }
+.bt-tile--ghost .bt-tile-lift { background: #1f1f23; border-radius: 4.53px; }
+.bt-tile--ghost .bt-tile-img { position: absolute; left: 50%; top: 50%; width: 96px; height: 96px; margin: -48px 0 0 -48px; border-radius: 50%;
+                               opacity: .55; -webkit-filter: grayscale(1); filter: grayscale(1); }
+.bt-tile--ghost .bt-tile-text { left: 12px; }
+
+/* The channel's menu (OK held on a tile): Twitch's question box, narrower, the name over the choices one under the
+   other */
+.bt-hold-panel { width: 360px; padding-bottom: 18px; }
+.bt-hold-panel .bt-modal-title { padding: 24px 24px 18px 26.67px; font-size: 21.6px; line-height: 25.92px; white-space: nowrap; overflow: hidden;
+                                 text-overflow: ellipsis; }
+.bt-hold-item { display: block; margin: 0 12px 6px; }

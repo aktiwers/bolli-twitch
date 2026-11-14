@@ -3,29 +3,32 @@
 // Up/Down pick a setting (those for where the chat is: shown or hidden as the chat button leaves it, beside the video
 // as in Twitch's app or over it, its position for that, its height at a side, a strip's style, the picture beside a
 // strip, Move and resize for a box of its own; its size, its background over the video, timestamps, avatars and old
-// messages), Left/Right change it in place (OK: the next value, round), Back closes. Choosing Custom takes the focus to
-// Move and resize, which OK starts: the arrows move the chat, OK turns them to resizing it (Left/Right its width,
-// Up/Down its height, its bottom staying), OK again keeps it; Back puts it back. Over a stream it is the stream's chat
-// that changes; over Settings an example: a picture (placed as the video would be) and Twitch-like chat lines made
-// here, their senders' pictures drawn here too (themes/chat.css: bt-chatset).
+// messages; how its emotes show: as pictures, as the words typed or hidden, or each kind its own way, the four kinds
+// then with a setting each), Left/Right change it in place (OK: the next value, round), Back closes. Choosing Custom
+// takes the focus to Move and resize, which OK starts: the arrows move the chat, OK turns them to resizing it
+// (Left/Right its width, Up/Down its height, its bottom staying), OK again keeps it; Back puts it back. Over a stream
+// it is the stream's chat that changes; over Settings an example: a picture (placed as the video would be) and
+// Twitch-like chat lines made here, their senders' pictures drawn here too (themes/chat.css: bt-chatset).
 
 import { h, LAYOUT_WIDTH, setShown, setText, toggleClass } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
 import { knownAvatar } from '../../chat/avatars.js';
 import { parseLine } from '../../chat/irc.js';
 import { ChatPanel } from '../../chat/panel.js';
+import { ChatPref, chatPref, ChatValue, setChatPref } from '../../chat/prefs.js';
 import { Box } from '../../player/session.js';
-import { chatBox, chatClasses, chatHidden, chatLayout, chatOver, ChatPref, chatPref, ChatValue, fitted, LEAST, setChatBox, setChatHidden,
-    setChatOver, setChatPref, WHOLE } from './chat-choice.js';
+import { chatBox, chatClasses, chatHidden, chatLayout, chatOver, fitted, LEAST, setChatBox, setChatHidden, setChatOver, WHOLE } from './chat-choice.js';
 
 /** A setting on the page: its values in order, each with its name (none: Move and resize); shown: whether it applies
- * to the chat as set (none: always); extra: an on/off one the summary names only when on */
+ * to the chat as set (none: always); extra: an on/off one the summary names only when on; said: what the summary
+ * says for a value in place of its name (a value not in it: nothing) */
 interface ChatSetting {
     label: string;
     name: ChatPref | 'chatShown' | 'chatOver' | '';
     values: { value: ChatValue; name: string }[];
     shown?: () => boolean;
     extra?: boolean;
+    said?: { [value: string]: string };
 }
 
 /** An example line comes this often (ms; the first ones at once) */
@@ -43,7 +46,14 @@ var beside = function (): boolean { return !chatOver(); };
 var atSide = function (): boolean { return chatLayout().kind === 'side'; };
 var ownBox = function (): boolean { return chatLayout().kind === 'own'; };
 var asStrip = function (): boolean { return chatLayout().kind === 'strip'; };
+var byKind = function (): boolean { return chatPref('chatEmotes') === 'kinds'; };
 var OFF_ON = [{ value: false, name: 'Off' }, { value: true, name: 'On' }];
+/** How emotes show: as their pictures, as the words that were typed, or left out */
+var EMOTES_AS: { value: ChatValue; name: string }[] = [{ value: 'pictures', name: 'Pictures' }, { value: 'text', name: 'Text' },
+    { value: 'hidden', name: 'Hidden' }];
+/** The summary names how the emotes show only when not all as pictures, and not each kind's way */
+var EMOTES_SAID: { [value: string]: string } = { text: 'Emotes as text', hidden: 'Emotes hidden', kinds: 'Emotes by kind' };
+var UNSAID: { [value: string]: string } = {};
 
 /** The page's settings in order */
 function chatSettings(): ChatSetting[] {
@@ -68,7 +78,12 @@ function chatSettings(): ChatSetting[] {
         { label: 'Timestamps', name: 'chatTimes', values: OFF_ON, extra: true },
         { label: 'Avatars', name: 'chatAvatars', values: OFF_ON, extra: true },
         { label: 'Old messages', name: 'chatFade', values: [{ value: 0, name: 'Stay' }, { value: 15, name: 'Fade after 15 s' },
-            { value: 30, name: 'Fade after 30 s' }, { value: 60, name: 'Fade after 1 min' }] }
+            { value: 30, name: 'Fade after 30 s' }, { value: 60, name: 'Fade after 1 min' }] },
+        { label: 'Emotes', name: 'chatEmotes', values: EMOTES_AS.concat([{ value: 'kinds', name: 'By kind' }]), said: EMOTES_SAID },
+        { label: 'Twitch emotes', name: 'chatEmotesTwitch', values: EMOTES_AS, shown: byKind, said: UNSAID },
+        { label: 'This channel\'s emotes', name: 'chatEmotesChannel', values: EMOTES_AS, shown: byKind, said: UNSAID },
+        { label: 'Other channels\' emotes', name: 'chatEmotesOther', values: EMOTES_AS, shown: byKind, said: UNSAID },
+        { label: 'Word emotes', name: 'chatEmotesWord', values: EMOTES_AS, shown: byKind, said: UNSAID }
     ];
 }
 
@@ -91,12 +106,13 @@ function applies(s: ChatSetting): boolean {
     return !s.shown || s.shown();
 }
 
-/** The settings' values in a line ("On · Beside the video · Right · Medium · Timestamps · Stay": Settings' card; an
- * on/off extra by its name when on) */
+/** The settings' values in a line ("On · Beside the video · Right · Medium · Timestamps · Stay · Emotes as text":
+ * Settings' card; an on/off extra by its name when on, the emotes only when not all pictures) */
 export function chatSummary(): string {
     return chatSettings().filter(function (s) { return s.values.length && applies(s) && (!s.extra || valueOf(s) === true); }).map(function (s) {
-        return s.extra ? s.label : s.values[valueAt(s)].name;
-    }).join(' · ');
+        var value = s.values[valueAt(s)];
+        return s.extra ? s.label : s.said ? s.said[String(value.value)] || '' : value.name;
+    }).filter(function (words) { return words !== ''; }).join(' · ');
 }
 
 /** The example's senders, as Twitch's chat sends them (made up: names, colours, a Kappa), and the colours of their

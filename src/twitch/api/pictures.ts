@@ -34,7 +34,41 @@ export function sized(url: string, width: number, height: number): string {
 
 /** A stream preview at this width (16:9); Twitch's stand-in when there is none or it is still being made */
 export function previewAt(url: string, width: number): string {
-    return sized(!url || PROCESSING.test(url) ? PREVIEW_404 : url, width, Math.round(width * 9 / 16));
+    if (!url || PROCESSING.test(url)) {
+        return sized(PREVIEW_404, width, Math.round(width * 9 / 16));
+    }
+    return wideAt(url, width);
+}
+
+/** The widest size a screen drew of each preview (by its address with the size taken out), wider than its tile's */
+var drawn: { [key: string]: number } = {};
+var drawnCount = 0;
+var DRAWN_MAX = 200;
+
+/** A preview at a bigger width than its tile's (16:9), kept in mind as drawn so a player opened from it starts with it */
+export function wideAt(url: string, width: number): string {
+    var key = sized(url, 0, 0);
+    if (width > (drawn[key] || 0)) {
+        if (++drawnCount > DRAWN_MAX) {
+            drawn = {};
+            drawnCount = 0;
+        }
+        drawn[key] = width;
+    }
+    return sized(url, width, Math.round(width * 9 / 16));
+}
+
+/** A player's start picture, as wide as the screen's layout */
+export var STILL_WIDTH = 1280;
+
+/** The pictures of a stream's preview or a video's or clip's for a player to show while it starts, best last: the
+ * widest already drawn (the tile's own, or the hero's), then the screen's size; none without a real picture */
+export function stillsOf(url: string): string[] {
+    if (!url || PROCESSING.test(url) || url.indexOf('/ttv-static/') >= 0) {
+        return [];
+    }
+    var width = drawn[sized(url, 0, 0)];
+    return [width ? sized(url, width, Math.round(width * 9 / 16)) : url, sized(url, STILL_WIDTH, Math.round(STILL_WIDTH * 9 / 16))];
 }
 
 /** A stream preview for a tile, 276x155 */

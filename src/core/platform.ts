@@ -27,6 +27,9 @@ export interface AndroidShell {
     /** The device's maker, model and Android version. Missing in shells
      * built before it */
     device?(): string;
+    /** Android's release version alone: "14". Missing in shells built
+     * before it */
+    osVersion?(): string;
 }
 
 /** webOS TV 1.x-2.x's old engine: old-engine.js (beside index.html) stood in for what it lacks and marked it (never

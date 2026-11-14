@@ -11,9 +11,12 @@
 //   levels(ms)                                   Stable Volume's input and output level over ms (dB RMS and peak; Android)
 //   fakeBreak(on)                                live playlists taken as having a commercial break (the swap runs)
 //   breakScreen(on)                              the screen told every player type has a commercial break, or not
+//   quick(on, lengths?)                          past broadcasts land quickly at starts and jumps (first bytes first), or
+//                                                not, and tell short lengths with it (lengths false: without them), from
+//                                                the next start on in this run (no argument: the device's own)
 //   quality(index), seek(s), pause(), resume(), debug(on) (hls.js's warnings on the console)
 //   state()                                      the session's state, first picture, stalls, seeks, pipelines, live
-//                                                delay, events
+//                                                delay, how past broadcasts land (quick), events
 // It prints no token, signature or stream address.
 
 import { whenLoaded } from '../../core/dom.js';
@@ -23,7 +26,7 @@ import * as session from './session.js';
 import { pipelineStats } from './pipeline.js';
 import { adStats } from './ads.js';
 import { Failure, Quality } from './engine.js';
-import { setHlsDebug } from './mse-engine.js';
+import { quickHere, setHlsDebug, setQuick, shortHere } from './mse-engine.js';
 import { audioGraph } from './stable-volume.js';
 
 var MAX_EVENTS = 40;
@@ -95,7 +98,7 @@ function start(target: session.Target, preview: boolean): void {
     stalls = 0;
     seeks = 0;
     note('start ' + target.kind + (preview ? ' preview' : ''));
-    session.play(target, events, preview ? { maxHeight: PREVIEW.height, muted: true, remember: false } : {});
+    session.play(target, events, preview ? { muted: true, remember: false } : {});
 }
 
 var api = {
@@ -181,6 +184,10 @@ var api = {
     debug: function (on: boolean): void {
         setHlsDebug(on);
     },
+    quick: function (on?: boolean, lengths?: boolean): boolean {
+        setQuick(on === undefined ? null : on, lengths);
+        return quickHere();
+    },
     fakeBreak: function (on: boolean): void {
         session.forceBreak(on);
     },
@@ -205,6 +212,8 @@ var api = {
         out.pipelines = pipelineStats;
         out.adSegmentsMarked = adStats.marked;
         out.liveDelay = session.liveDelay();
+        out.window = session.vodWindow();
+        out.quick = quickHere() ? shortHere() ? 'short lengths' : 'first bytes' : '';
         out.events = log.slice();
         return out;
     }

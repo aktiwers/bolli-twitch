@@ -2,7 +2,7 @@
 // with LIVE and the viewers; an offline one plays its newest video with its date, views and length; a channel or
 // video Twitch gates for its content shows the gate's words in the box instead (mature content plays there with
 // Bolli's Mature Content Warning switched off, Twitch's age and region restrictions never), and one with no video
-// says there is no content. Both play with sound and small (at most 360p), as Twitch's preview does. The app's one
+// says there is no content. Both play with sound, at full screen's quality, so OK takes them over as they are. The app's one
 // video lies under the page: while it plays the box is clear and the video is placed under it. The full-screen
 // player of the same target takes the same playback over, and the box takes it back (the session's leave and claim).
 
@@ -31,8 +31,8 @@ export var sessionPlayer: PreviewPlayer = {
  * 300 (Settings' Keep Live Preview) */
 var BOX: Box = { left: 868.67, top: 168, width: 351.33, height: 198 };
 var RAISED: Box = { left: 868.67, top: 96, width: 351.33, height: 198 };
-/** Twitch's preview is small: at most this tall */
-var OPTIONS: PlayOptions = { maxHeight: 360, muted: false, remember: false };
+/** At the quality full screen plays: OK takes it over at that quality from its first frame */
+var OPTIONS: PlayOptions = { muted: false, remember: false };
 
 export class Preview {
     el: HTMLElement;

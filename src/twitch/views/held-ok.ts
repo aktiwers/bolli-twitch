@@ -2,7 +2,8 @@
 // focus into one, the repeats would act on what is focused there (open a tile). The shell latches OK after such a
 // navigation and ignores it until OK is released: its keyup (Android: bolliKey's release), another key, the app
 // hidden, or a pause longer than a remote waits before its first repeat (a release that never came). A screen whose
-// OK changed things in place (a follow, results in place of the keyboard) asks the same with holdOk().
+// OK changed things in place (a follow, results in place of the keyboard) asks the same with holdOk(). The releases it
+// watches are passed on to what acts on OK's release (OkWatcher: a tile whose held OK opens a menu).
 
 import { KEY } from '../../core/keys.js';
 
@@ -18,6 +19,19 @@ export function holdOk(): void {
     if (shell && shell.pressing === KEY.OK) {
         shell.latch(Date.now());
     }
+}
+
+/** OK is still down and holding it has done its thing (a menu opened): its repeats are ignored until it is released */
+export function okHeld(): void {
+    if (shell) {
+        shell.latch(Date.now());
+    }
+}
+
+/** Hears OK released (up) and the app hidden (cancel: the release will not come) */
+export interface OkWatcher {
+    up(): void;
+    cancel(): void;
 }
 
 export class HeldOk {
@@ -60,19 +74,27 @@ export class HeldOk {
     }
 
     /** Releases OK on its keyup, on the Android app's release (after initKeys(), which sets bolliKey) and when the
-     * app is hidden; holdOk() latches this one from now on */
-    watch(): void {
+     * app is hidden; holdOk() latches this one from now on. watcher: told of the same */
+    watch(watcher?: OkWatcher): void {
         var self = this;
         shell = this;
         var release = function (): void {
             self.release();
+            if (watcher) {
+                watcher.up();
+            }
         };
         document.addEventListener('keyup', function (e: KeyboardEvent) {
             if (e.keyCode === KEY.OK) {
                 release();
             }
         }, true);
-        document.addEventListener('visibilitychange', release, false);
+        document.addEventListener('visibilitychange', function () {
+            self.release();
+            if (watcher) {
+                watcher.cancel();
+            }
+        }, false);
         var page = window as unknown as { bolliKey?: (code: number, isUp?: boolean) => void };
         var pass = page.bolliKey;
         if (pass) {

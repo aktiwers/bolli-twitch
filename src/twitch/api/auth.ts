@@ -9,6 +9,7 @@
 import { HttpError, errorBody, postForm } from '../../core/http.js';
 import { load, save } from '../../core/store.js';
 import { CLIENT_ID, gql, onAuthFailed, setAuthToken, signedIn } from './gql.js';
+import { Listeners } from './listeners.js';
 import { Channel } from './types.js';
 import { Raw, USER_FIELDS, toChannel } from './parse.js';
 
@@ -72,7 +73,7 @@ var active: SignIn | null = null;
 var signInCalls = 0;
 /** The last code Twitch gave and when it runs out, until it is used up */
 var lastCode: { reply: DeviceReply; ends: number } | null = null;
-var listeners: ((signedIn: boolean) => void)[] = [];
+var listeners = new Listeners<[boolean]>();
 
 /** At start: the kept token goes to every query; Twitch refusing it later forgets it */
 export function initAuth(): void {
@@ -88,15 +89,11 @@ export function initAuth(): void {
 
 /** listener(signedIn) after each sign-in, sign-out and token Twitch refused */
 export function onAccountChange(listener: (signedIn: boolean) => void): void {
-    listeners.push(listener);
+    listeners.on(listener);
 }
 
 function changed(): void {
-    var now = signedIn();
-    var all = listeners.slice();
-    for (var i = 0; i < all.length; i++) {
-        all[i](now);
-    }
+    listeners.tell(signedIn());
 }
 
 /** The account's login and token for Twitch's chat; null for a guest, and until the account's login is known */

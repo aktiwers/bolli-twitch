@@ -8,7 +8,7 @@ import { video } from '../../api/video.js';
 import { ChatConnection } from '../../chat/connection.js';
 import { loadEmotes } from '../../chat/emotes.js';
 import { ChatPanel, PanelLayout } from '../../chat/panel.js';
-import { duration, keyOf, leave, owns, pause, pictureRuns, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
+import { duration, keep, keyOf, leave, owns, pause, pictureRuns, placeVideo, play, playingKey, position, prefetch, ready, resume, seek, setQuality, stop, Target } from '../../player/session.js';
 import { Navigator, Screen } from '../navigator.js';
 import { gatePassed } from './gate.js';
 import { ChatSide, PlayerDeps, PlayerItem, PlayerSession, PlayerView } from './player.js';
@@ -16,7 +16,7 @@ import { Watched, WatchTime } from '../../player/watch-time.js';
 import { startOf } from './resume.js';
 
 var session: PlayerSession = {
-    play: play, leave: leave, stop: stop, owns: owns, setQuality: setQuality, seek: seek, pause: pause, resume: resume,
+    play: play, leave: leave, stop: stop, keep: keep, owns: owns, setQuality: setQuality, seek: seek, pause: pause, resume: resume,
     position: position, duration: duration, prefetch: prefetch, placeVideo: placeVideo, pictureRuns: pictureRuns,
     plays: function (target: Target): boolean {
         return playingKey() === keyOf(target);

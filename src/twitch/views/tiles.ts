@@ -2,11 +2,15 @@
 // title, channel, category), a category (box art, name, viewers), a past broadcast or clip (picture with views and
 // length, the category's box art, title, date, category) and an offline channel (a round avatar, name, last live,
 // followers). Twitch draws an offline channel two ways: wide with a 150 avatar and centred text (Search), and in
-// Following's offline row narrow with a 120 avatar and text to the left (the row asks for it: ChannelCard). A tile
-// is built once; set() gives it another item of its kind, so a row keeps its tiles when fresh data comes. Pictures
-// are asked only while the row wants them (pictures()).
+// Following's offline row narrow with a 120 avatar and text to the left (the row asks for it: ChannelCard). Bolli's
+// Favorites tab has cards of its own: a favorite as a round avatar, in a red ring with LIVE while it is live and grey
+// when not, and a past broadcast with its channel's avatar and name (its row mixes channels); while a favorite is moved
+// in Live Now, the offline ones stand there as ghosts (a stream tile's size, greyed, the avatar in the picture's place,
+// Offline). A tile is built once;
+// set() gives it another item of its kind, so a row keeps its tiles when fresh data comes. Pictures are asked only
+// while the row wants them (pictures()).
 
-import { h, setShown, setText, toggleClass } from '../../core/dom.js';
+import { h, px, setShown, setText, toggleClass } from '../../core/dom.js';
 import { clock } from '../../core/time.js';
 import { avatarAt } from '../api/pictures.js';
 import { Channel, Game, Item, Stream, Video } from '../api/types.js';
@@ -28,11 +32,14 @@ interface Kind {
     texts(item: Item): string[];
     /** The picture and the small one */
     pictures(item: Item): string[];
+    /** Whether the tile is marked live now (bt-tile--live), where the kind's items can be either */
+    liveNow?(item: Item): boolean;
 }
 
 type StreamItem = Extract<Item, { kind: 'stream' }>;
 type GameItem = Extract<Item, { kind: 'game' }>;
 type ChannelItem = Extract<Item, { kind: 'channel' }>;
+type VideoItem = Extract<Item, { kind: 'video' }>;
 
 var WIDE = 296;
 
@@ -107,13 +114,68 @@ var NARROW_CHANNEL: Kind = {
     texts: channelTexts, pictures: channelPictures
 };
 
+/** The avatar on a favorite's card (the picture is asked at the size the screen draws it) */
+var FAVORITE_AVATAR = 120;
+
+/** A favorite, live or not: its name, then what it plays (live), else when it was last live or what it played */
+var FAVORITE_CHANNEL: Kind = {
+    width: 148, cls: 'bt-tile bt-tile--fav', live: true, stat: false, length: false, mark: '', lines: 1,
+    texts: function (item: Item): string[] {
+        var c = item as ChannelItem;
+        return [cardName(c.channel), !c.live && c.lastLive ? 'Live ' + ago(c.lastLive).toLowerCase() : gameName(c.lastGame)];
+    },
+    pictures: function (item: Item): string[] {
+        return [avatarAt((item as ChannelItem).channel.avatar, px(FAVORITE_AVATAR) || FAVORITE_AVATAR), ''];
+    },
+    liveNow: function (item: Item): boolean {
+        return (item as ChannelItem).live;
+    }
+};
+
+/** A favorite's past broadcast: a video tile with the channel's avatar and name in place of the category's */
+var FAVORITE_VIDEO: Kind = {
+    width: WIDE, cls: 'bt-tile', live: false, stat: true, length: true, mark: 'bt-tile-avatar', lines: 2,
+    texts: function (item: Item): string[] {
+        var v = (item as VideoItem).video;
+        return [v.title, v.channel.displayName, ago(v.publishedAt), count(v.views, 1, 'view'), clock(v.lengthSeconds)];
+    },
+    pictures: function (item: Item): string[] {
+        var v = (item as VideoItem).video;
+        return [v.preview, v.channel.avatar];
+    }
+};
+
+/** An offline favorite among Live Now's streams while one is moved there: its name, Offline or when it was last live,
+ * what it played */
+var GHOST: Kind = {
+    width: WIDE, cls: 'bt-tile bt-tile--ghost', live: false, stat: false, length: false, mark: '', lines: 2,
+    texts: function (item: Item): string[] {
+        var c = item as ChannelItem;
+        return [cardName(c.channel), c.lastLive ? 'Last live ' + ago(c.lastLive).toLowerCase() : 'Offline', gameName(c.lastGame)];
+    },
+    pictures: function (item: Item): string[] {
+        // The size All Favorites asks: the picture is there already
+        return [avatarAt((item as ChannelItem).channel.avatar, px(FAVORITE_AVATAR) || FAVORITE_AVATAR), ''];
+    }
+};
+
 var KINDS: { [kind: string]: Kind } = { stream: STREAM, game: GAME, video: VIDEO, clip: VIDEO, channel: CHANNEL };
 
-/** Which card a row draws for an offline channel: wide (Search) or narrow (Following's offline row) */
-export type ChannelCard = 'wide' | 'narrow';
+/** Which cards a row draws: an offline channel wide (Search) or narrow (Following's offline row), or the Favorites
+ * tab's cards for a channel and a past broadcast */
+export type ChannelCard = 'wide' | 'narrow' | 'favorite';
 
 function kindOf(item: Item, card?: ChannelCard): Kind {
-    return card === 'narrow' && item.kind === 'channel' ? NARROW_CHANNEL : KINDS[item.kind];
+    if (item.kind === 'channel' && item.ghost) {
+        return GHOST;
+    }
+    if (card === 'narrow' && item.kind === 'channel') {
+        return NARROW_CHANNEL;
+    }
+    if (card === 'favorite' && (item.kind === 'channel' || item.kind === 'video')) {
+        return item.kind === 'channel' ? FAVORITE_CHANNEL : FAVORITE_VIDEO;
+    }
+    return KINDS[item.kind];
 }
 
 export function streamItem(stream: Stream): Item {
@@ -272,6 +334,9 @@ export class Tile {
         var texts = this.kind.texts(this.item);
         for (var i = 0; i < this.texts.length; i++) {
             setText(this.texts[i], texts[i] || '');
+        }
+        if (this.kind.liveNow) {
+            toggleClass(this.el, 'bt-tile--live', this.kind.liveNow(this.item));
         }
     }
 }

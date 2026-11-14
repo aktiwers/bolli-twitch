@@ -95,7 +95,7 @@ export class ChatConnection {
         this.leave();
         this.login = login;
         live.push(this);
-        events.reset();
+        events.reset(login);
         this.hold();
         this.start();
     }

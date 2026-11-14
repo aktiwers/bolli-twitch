@@ -42,14 +42,19 @@ export interface Source {
     quality: number;
     /** Where a past broadcast starts (s) */
     startAt?: number;
-    /** The largest picture height wanted (a preview); 0 for no limit */
-    maxHeight: number;
     /** A media playlist the session already fetched (its stitched check), handed to hls.js once instead of a fetch */
     level?: Fetched;
     /** A past broadcast's first segment fetched ahead, handed to hls.js once when it asks for that address */
     segment?: SegmentAhead;
-    /** Live streams on the Media Source engine: every media playlist goes through it (stitched segments become gaps) */
+    /** Live streams and past broadcasts on the Media Source engine: every media playlist goes through it (live:
+     * stitched segments become gaps; a past broadcast: cut to the window around where it plays) */
     filter?: (text: string) => string;
+    /** A past broadcast on the Media Source engine: its whole length while the filter hands hls.js a window of it
+     * (0: whole) */
+    whole?: () => number;
+    /** A past broadcast on the Media Source engine: its media playlists as fetched, by address; a later load of one
+     * (its window moved on, a new start of this source) takes it from here instead of a fetch */
+    levels?: { [url: string]: string };
     /** Live streams on the Media Source engine: a media playlist as fetched (its address and text) goes on as another
      * text the session finds for it (a commercial break left behind), or null for as it is */
     swap?: (url: string, text: string) => Promise<string> | null;
@@ -81,16 +86,22 @@ export interface Engine {
     start(source: Source, events: EngineEvents, paused?: boolean): void;
     /** An index in the source's qualities, -1 for Auto */
     setQuality(index: number): void;
-    /** The largest picture height wanted from now on; 0 for no limit */
-    setMaxHeight(height: number): void;
     /** The quality playing (an index in the source's qualities; -1 not known yet) */
     current(): number;
     /** The session paused (true) or resumed the video */
     paused(on: boolean): void;
+    /** False while the video may not play yet: it still stands in the last stream (a taken pipeline before the new
+     * start is in), where the TV would play on the last stream's sound it decoded already. The engine plays it itself
+     * once it may (none: always) */
+    mayPlay?(): boolean;
     /** Stops and hides the video (the Media Source engine keeps its pipeline for the next start) */
     stop(): void;
-    /** Where a seek to seconds lands (none: there) */
-    seekTarget?(seconds: number): number;
+    /** Moves the video to seconds or near it, and returns where it lands (none: the session seeks, there) */
+    seek?(seconds: number): number;
+    /** The stream's real length (s) while the video is told another (0, or none: the video's own is it) */
+    length?(): number;
+    /** The past broadcast's window moved on (Source.whole): hls.js gets its media playlist again through the filter */
+    refresh?(): void;
     /** How far a live stream is behind (the test hook; null when not known) */
     liveDelay?(): Delay | null;
 }

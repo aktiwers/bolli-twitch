@@ -10,15 +10,20 @@
 // The live chat settings place it elsewhere (place): the same column at the left; rows over the video, only whole ones
 // showing; or along a strip as a band of one-line rows, a ticker, or one message at a time. Each row has the
 // message's time and its sender's picture, shown when the settings say (a picture is asked for only then).
+// Emotes show as the live chat settings say (chat/emote-kinds.ts), worked out as a message is drawn: as pictures, as
+// the words typed, or left out, and a chat message with nothing left is not drawn. When they change, the messages kept
+// are drawn again as they now show, and once more when a list they newly need has come. How each emote shows is read
+// from the settings when they or the channel change, not per message.
 
 import { h, setClass, setShown, setText, translate, uiScale } from '../../core/dom.js';
 import { localClock } from '../../core/time.js';
 import { badgeOf } from './assets.js';
 import { avatarOf } from './avatars.js';
-import { emoteFinder } from './emotes.js';
+import { emoteShows } from './emote-kinds.js';
+import { emoteFinder, emoteShower, emotesNeeded } from './emotes.js';
 import { IrcLine } from './irc.js';
-import { loginOf, messageOf, statusLine } from './parse.js';
-import { ChatEvents, KEPT, Message, MessageKind, Part } from './types.js';
+import { loginOf, messageOf, shownParts, statusLine, withWordEmotes } from './parse.js';
+import { ChatEvents, EmoteFinder, EmotePart, EmoteShow, KEPT, Message, MessageKind, Part } from './types.js';
 
 /** Rows kept beyond KEPT, then taken off together: one repaint of the list for SPARE messages */
 var SPARE = 30;
@@ -124,8 +129,14 @@ export class ChatPanel implements ChatEvents {
     private oneAt = 0;
     /** Rows in the list, oldest first */
     private rows: Row[] = [];
-    /** The messages drawn last (as many as the list keeps rows), drawn again when it shows them another way */
+    /** The messages that came last (as many as the list keeps rows), drawn again when it shows them another way */
     private recent: Message[] = [];
+    /** The channel it shows: the one its connection opened, else its lines' ('' before the first), and how the emote
+     * settings showed emotes when it last looked (emoteShows) */
+    private channel = '';
+    private shows = emoteShows();
+    /** How an emote shows in the channel's chat as those settings have it (null: every one as its picture) */
+    private emoteShow: ((emote: EmotePart) => EmoteShow) | null = emoteShower('');
     /** Senders' pictures came: the rows waiting for one get it */
     private avatarsCame: () => void;
     /** A row taken off, for the next messages */
@@ -172,16 +183,20 @@ export class ChatPanel implements ChatEvents {
 
     /** Laid out as the live chat settings say (Twitch's column at the right: place null; nothing done when nothing
      * changed); the messages made again only to or from a ticker or one at a time (the rows' ways share their rows), at
-     * another emote size, or on a ticker whose messages' widths changed; else pictures switched in their rows and the
-     * rows lifted again (the look may have changed their heights). Another way of showing them draws what waits at once */
+     * another emote size, with emotes showing another way, or on a ticker whose messages' widths changed; else pictures
+     * switched in their rows and the rows lifted again (the look may have changed their heights). Another way of
+     * showing them draws what waits at once */
     place(layout: PanelLayout): void {
         var place = layout.place;
         var mode = layout.mode;
         var restyled = layout.look !== this.look || layout.avatars !== this.avatars;
-        if (mode === this.mode && layout.emotePx === this.emotePx && !restyled && samePlace(place, this.placed)) {
+        var shows = emoteShows();
+        var emotes = shows !== this.shows;
+        if (mode === this.mode && layout.emotePx === this.emotePx && !restyled && !emotes && samePlace(place, this.placed)) {
             return;
         }
-        var again = mode !== this.mode && (running(mode) || running(this.mode)) || layout.emotePx !== this.emotePx || mode === 'ticker' && restyled;
+        var again = mode !== this.mode && (running(mode) || running(this.mode)) || layout.emotePx !== this.emotePx || mode === 'ticker' && restyled ||
+            emotes;
         var pictures = layout.avatars !== this.avatars;
         var moved = mode !== this.mode;
         this.mode = mode;
@@ -189,6 +204,11 @@ export class ChatPanel implements ChatEvents {
         this.avatars = layout.avatars;
         this.look = layout.look;
         this.placed = place;
+        this.shows = shows;
+        if (emotes) {
+            this.emoteShow = emoteShower(this.channel);
+            this.emotesChanged();
+        }
         if (moved) {
             clearTimeout(this.timer);
             this.timer = 0;
@@ -244,11 +264,13 @@ export class ChatPanel implements ChatEvents {
         }
     }
 
-    /** Empties it: the connection moved to another channel */
-    reset(): void {
+    /** Empties it: the connection moved to another channel (login: known from here on, before its first line; none:
+     * a chat without a connection) */
+    reset(login?: string): void {
         this.restart();
         this.queue = [];
         this.recent = [];
+        this.setChannel(login || '');
         this.oneAt = 0;
         this.clear();
     }
@@ -257,7 +279,18 @@ export class ChatPanel implements ChatEvents {
         for (var i = 0; i < list.length; i++) {
             this.queue.push(list[i]);
         }
+        if (list.length) {
+            this.setChannel((list[0].params[0] || '').slice(1));
+        }
         this.queued();
+    }
+
+    /** The channel it shows: its emotes show by that channel's own */
+    private setChannel(login: string): void {
+        if (login !== this.channel) {
+            this.channel = login;
+            this.emoteShow = emoteShower(login);
+        }
     }
 
     /** Lines with the sender's text (chats, and notices such as a resub's) go from the queue and say so in their rows;
@@ -347,9 +380,9 @@ export class ChatPanel implements ChatEvents {
         var taken = 0;
         while (made < count && taken < this.queue.length) {
             var m = toMessage(this.queue[taken++]);
-            if (m) {
-                this.addRow(m, added);
-                this.remember(m);
+            var parts = m && this.take(m);
+            if (m && parts) {
+                this.addRow(m, parts, added);
                 made++;
             }
         }
@@ -363,9 +396,9 @@ export class ChatPanel implements ChatEvents {
         }
     }
 
-    /** A ticker or one at a time: the next message (the ticker's once less than half its width is still to come;
-     * one at a time the newest, once the one in its place has shown ONE_MS); meanwhile only the newest wait, and the
-     * next draw is when it is due */
+    /** A ticker or one at a time: the next message that shows (the ticker's once less than half its width is still to
+     * come; one at a time the newest, once the one in its place has shown ONE_MS); meanwhile only the newest wait, and
+     * the next draw is when it is due */
     private drawStrip(): void {
         var one = this.mode === 'one';
         if (one) {
@@ -374,13 +407,14 @@ export class ChatPanel implements ChatEvents {
         var wait = one ? this.oneAt + ONE_MS - Date.now() : this.ticker.wait();
         if (wait <= 0) {
             var m: Message | null = null;
-            while (!m && this.queue.length) {
+            var parts: Part[] | null = null;
+            while (!parts && this.queue.length) {
                 m = toMessage(this.queue.shift() as Queued);
+                parts = m && this.take(m);
             }
-            if (m) {
+            if (m && parts) {
                 this.drawn++;
-                this.remember(m);
-                this.stripShows(m);
+                this.stripShows(m, parts);
                 wait = one ? ONE_MS : this.ticker.wait();
             }
         }
@@ -392,16 +426,17 @@ export class ChatPanel implements ChatEvents {
         }
     }
 
-    /** m onto the ticker, or in the one's place (added again: its entrance and fading from the start) */
-    private stripShows(m: Message): void {
+    /** m, with its parts as shown, onto the ticker, or in the one's place (added again: its entrance and fading from
+     * the start) */
+    private stripShows(m: Message, parts: Part[]): void {
         if (this.mode !== 'one') {
             var row = this.nextRow();
-            this.fill(row, m);
+            this.fill(row, m, parts);
             this.ticker.add(row);
             return;
         }
         var one = this.oneRow || (this.oneRow = this.nextRow());
-        this.fill(one, m);
+        this.fill(one, m, parts);
         if (one.el.parentNode) {
             this.oneEl.removeChild(one.el);
         }
@@ -409,36 +444,90 @@ export class ChatPanel implements ChatEvents {
         this.oneAt = Date.now();
     }
 
-    /** m drawn in a row at the list's end (into added, then added to the list) */
-    private addRow(m: Message, added: DocumentFragment): void {
+    /** m, with its parts as shown, drawn in a row at the list's end (into added, then added to the list) */
+    private addRow(m: Message, parts: Part[], added: DocumentFragment): void {
         var row = this.nextRow();
-        this.fill(row, m);
+        this.fill(row, m, parts);
         added.appendChild(row.el);
         this.rows.push(row);
     }
 
-    /** One of the last messages drawn, as many as the list keeps rows */
-    private remember(m: Message): void {
+    /** A message that came: one of the last, as many as the list keeps rows; its parts as shown (null: not drawn) */
+    private take(m: Message): Part[] | null {
         this.recent.push(m);
         if (this.recent.length > KEPT + SPARE) {
             this.recent.shift();
         }
+        return this.shownOf(m);
     }
 
-    /** The messages drawn again as it shows them now: the last ones drawn in rows, or one at a time the newest (a
-     * ticker fills with the next) */
+    /** m's parts as the emote settings show them; null for a chat message with nothing left (only emotes, left
+     * out). A notice keeps its band */
+    private shownOf(m: Message): Part[] | null {
+        var show = m.kind === 'chat' || m.kind === 'notice' ? this.emoteShow : null;
+        if (!show) {
+            return m.parts;
+        }
+        var parts = shownParts(m.parts, show);
+        return parts.length || m.kind !== 'chat' ? parts : null;
+    }
+
+    /** The messages drawn again as it shows them now: the last ones that came in rows, or one at a time the newest
+     * that shows (a ticker fills with the next) */
     private redraw(): void {
         this.clear();
         var recent = this.recent;
-        if (this.mode === 'one' && recent.length) {
-            this.stripShows(recent[recent.length - 1]);
+        if (this.mode === 'one') {
+            for (var n = recent.length - 1; n >= 0; n--) {
+                var newest = this.shownOf(recent[n]);
+                if (newest) {
+                    this.stripShows(recent[n], newest);
+                    break;
+                }
+            }
         } else if (this.mode !== 'ticker' && recent.length) {
             var added = document.createDocumentFragment();
             for (var i = 0; i < recent.length; i++) {
-                this.addRow(recent[i], added);
+                var parts = this.shownOf(recent[i]);
+                if (parts) {
+                    this.addRow(recent[i], parts, added);
+                }
             }
             this.list.appendChild(added);
             this.lift();
+        }
+    }
+
+    /** The emote settings changed: the messages kept follow them (place draws them again), and the lists the
+     * settings now need are asked for, the messages drawn once more when a missing one has come (not a ticker's: it
+     * runs on with the next) */
+    private emotesChanged(): void {
+        var self = this;
+        var channel = this.channel;
+        this.reword();
+        var came = emotesNeeded(channel);
+        if (came) {
+            came.then(function () {
+                if (self.channel === channel) {
+                    self.reword();
+                    if (self.mode !== 'ticker') {
+                        self.redraw();
+                    }
+                }
+            });
+        }
+    }
+
+    /** The words a list in use knows made emotes in the messages kept: those made before the list was here, or while
+     * word emotes showed as text */
+    private reword(): void {
+        var find = this.recent.length ? emoteFinder(this.channel) : null;
+        if (find) {
+            this.recent.forEach(function (m) {
+                if (m.kind === 'chat' || m.kind === 'notice') {
+                    m.parts = withWordEmotes(m.parts, find as EmoteFinder);
+                }
+            });
         }
     }
 
@@ -492,14 +581,14 @@ export class ChatPanel implements ChatEvents {
         translate(this.list, 0, Math.round(y * scale) / scale);
     }
 
-    /** Puts m into row, reusing its elements */
-    private fill(row: Row, m: Message): void {
+    /** Puts m, with its parts as shown, into row, reusing its elements */
+    private fill(row: Row, m: Message, parts: Part[]): void {
         row.message = m;
         if (row.cut) {
             row.cut = false;
             setShown(row.el, true);
         }
-        setClass(row.el, ROW_CLASS[m.kind] + (m.kind === 'notice' && !m.parts.length ? ' bt-chat-row--bare' : ''));
+        setClass(row.el, ROW_CLASS[m.kind] + (m.kind === 'notice' && !parts.length ? ' bt-chat-row--bare' : ''));
         empty(row.system);
         var emote = m.notice ? drawParts(row.system, m.notice, row.emotes, 0, this.emotePx) : 0;
         setText(row.time, m.at ? clockAt(m.at) : '');
@@ -515,7 +604,7 @@ export class ChatPanel implements ChatEvents {
         if (m.deleted) {
             deleted(row);
         } else {
-            drawParts(row.text, m.parts, row.emotes, emote, this.emotePx);
+            drawParts(row.text, parts, row.emotes, emote, this.emotePx);
         }
     }
 

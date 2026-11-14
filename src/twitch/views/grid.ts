@@ -8,7 +8,7 @@ import { h, toggleClass, translate } from '../../core/dom.js';
 import { KEY } from '../../core/keys.js';
 import { Item } from '../api/types.js';
 import { itemId } from './rows.js';
-import { Tile } from './tiles.js';
+import { ChannelCard, Tile } from './tiles.js';
 
 export interface GridLayout {
     cols: number;
@@ -29,6 +29,8 @@ export class Grid {
     items: Item[] = [];
     /** The focused tile */
     index = 0;
+    /** The cards its tiles are drawn as (the Favorites tab's; Twitch's own when not set) */
+    card?: ChannelCard;
     private tiles: (Tile | undefined)[] = [];
     private rowEls: HTMLElement[] = [];
     private drawnRows: boolean[] = [];
@@ -50,6 +52,11 @@ export class Grid {
 
     get focusedItem(): Item | null {
         return this.items[this.index] || null;
+    }
+
+    /** The focused tile, once built */
+    get focusedTile(): Tile | null {
+        return this.tiles[this.index] || null;
     }
 
     /** The focused row */
@@ -109,6 +116,11 @@ export class Grid {
         this.index = to;
         this.update();
         return true;
+    }
+
+    /** The layout's place for the focused row changed (what is above the grid moved): it slides there */
+    place(): void {
+        this.update();
     }
 
     /** Focus shown on a tile (false: elsewhere on the screen, or the menu has it) */
@@ -227,7 +239,7 @@ export class Grid {
     private tile(i: number, rowEl: HTMLElement): Tile {
         var tile = this.tiles[i];
         if (!tile) {
-            tile = new Tile(this.items[i]);
+            tile = new Tile(this.items[i], this.card);
             tile.el.style.left = (i % this.layout.cols) * this.layout.step + 'px';
             tile.el.style.width = this.layout.step + 'px';
             rowEl.appendChild(tile.el);

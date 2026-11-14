@@ -1,6 +1,7 @@
 // The icons Twitch's TV app draws on more than one screen, drawn here as SVG: the gear, the blank box art, Go Back's
-// chevron, the Follow hearts (outlined, filled once followed), Report's speech bubble and Watch's play triangle. Every
-// icon module draws through svgNode, which parses each SVG once and then clones it.
+// chevron, the Follow hearts (outlined, filled once followed), Report's speech bubble and Watch's play triangle; and
+// Bolli's Favorite stars in the hearts' style. Every icon module draws through svgNode, which parses each SVG once and
+// then clones it.
 
 import { h } from '../../core/dom.js';
 
@@ -38,6 +39,13 @@ var HEART = '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke=
 var HEARTED = '<svg viewBox="0 0 20 20" width="20" height="20" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round">' +
     '<path d="' + HEART_PATH + '"/></svg>';
 
+/** The Favorite star in the same box and line: outlined, and filled once a favorite */
+var STAR_PATH = 'M10 3.2l1.82 4.89 5.22.22-4.09 3.25 1.4 5.03L10 13.7l-4.35 2.89 1.4-5.03-4.09-3.25 5.22-.22z';
+var STAR = '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">' +
+    '<path d="' + STAR_PATH + '"/></svg>';
+var STARRED = '<svg viewBox="0 0 20 20" width="20" height="20" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round">' +
+    '<path d="' + STAR_PATH + '"/></svg>';
+
 /** Report: a speech bubble with an exclamation mark */
 var REPORT = '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">' +
     '<path d="M4 3.5h12A1.25 1.25 0 0 1 17.25 4.75v9.5A1.25 1.25 0 0 1 16 15.5h-3.5L10 18l-2.5-2.5H4a1.25 1.25 0 0 1-1.25-1.25v-9.5A1.25 1.25 0 0 1 4 3.5z"' +
@@ -70,6 +78,11 @@ export function chevronIcon(): Node {
 /** The Follow heart: filled when followed */
 export function heartIcon(followed: boolean): Node {
     return svgNode(followed ? HEARTED : HEART);
+}
+
+/** The Favorite star: filled when the channel is a favorite */
+export function starIcon(favorite: boolean): Node {
+    return svgNode(favorite ? STARRED : STAR);
 }
 
 export function reportIcon(): Node {

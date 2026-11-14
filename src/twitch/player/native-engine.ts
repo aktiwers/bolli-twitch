@@ -2,14 +2,13 @@
 // here, fMP4 does not), and every stream on a device without Media Source (session.ts engineFor; it cannot play
 // Twitch live on the TV). A stream's chosen media playlist, or a clip's file, goes straight into the video (given the
 // master, the TV's player starts at its lowest variant and climbs slowly). Auto plays the best quality the remembered
-// line speed allows (bandwidth.ts), and so does a picked quality taller than a preview's largest height; a stream
-// whose picture stalls twice within a while steps one quality down (its own picks stay there for the app's run,
-// hls.js's measured speed is not touched), and a picture that stands still is reloaded (the TV's player does not
+// line speed allows (bandwidth.ts); a stream whose picture stalls twice within a while steps one quality down (its
+// own picks stay there for the app's run, hls.js's measured speed is not touched), and a picture that stands still is reloaded (the TV's player does not
 // always go on after a gap). Clips loop, as on Twitch, and are never stepped down.
 
 import { unloadVideo, watchStill } from '../../player/video.js';
 import { Engine, EngineEvents, hideVideo, playVideo, Source } from './engine.js';
-import { fitQuality, lowerTo, nativeBandwidth, pickUnder } from './bandwidth.js';
+import { fitQuality, lowerTo, nativeBandwidth } from './bandwidth.js';
 import { whenKeysRest } from './rest.js';
 
 /** Two stalls this close together step Auto one quality down */
@@ -24,7 +23,6 @@ export class NativeEngine implements Engine {
     private events: EngineEvents | null = null;
     private source: Source | null = null;
     private choice = -1;
-    private maxHeight = 0;
     private pausedOn = false;
     private playing = -1;
     private lastStall = 0;
@@ -43,7 +41,6 @@ export class NativeEngine implements Engine {
         this.events = events;
         this.source = source;
         this.choice = source.quality;
-        this.maxHeight = source.maxHeight;
         this.pausedOn = !!paused;
         this.lastStall = 0;
         this.listen(source.kind !== 'clip');
@@ -102,11 +99,10 @@ export class NativeEngine implements Engine {
     }
 
     /** The quality to play: the one picked, or Auto's (the best the line speed allows, under what this player stalled
-     * above, up to the largest height wanted) */
+     * above) */
     private wanted(): number {
         var list = (this.source as Source).qualities;
-        var pick = pickUnder(list, this.choice, this.maxHeight);
-        return pick >= 0 ? pick : fitQuality(list, nativeBandwidth(), this.maxHeight);
+        return list[this.choice] ? this.choice : fitQuality(list, nativeBandwidth());
     }
 
     /** Plays quality index from at (s; live: 0, the TV's player starts near the newest segment) */
@@ -126,7 +122,7 @@ export class NativeEngine implements Engine {
 
     private canStepDown(): boolean {
         var source = this.source;
-        return !!source && source.kind !== 'clip' && pickUnder(source.qualities, this.choice, this.maxHeight) < 0 &&
+        return !!source && source.kind !== 'clip' && !source.qualities[this.choice] &&
             this.playing < source.qualities.length - 1;
     }
 
@@ -154,13 +150,6 @@ export class NativeEngine implements Engine {
 
     setQuality(index: number): void {
         this.choice = index;
-        if (this.events) {
-            this.toWanted();
-        }
-    }
-
-    setMaxHeight(height: number): void {
-        this.maxHeight = height;
         if (this.events) {
             this.toWanted();
         }

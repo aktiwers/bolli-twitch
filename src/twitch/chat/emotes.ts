@@ -1,28 +1,35 @@
-// Third-party emotes in chat (Settings, on unless switched off): the 7TV, BetterTTV and FrankerFaceZ emotes that
-// viewers with those browser extensions see, a word that names one drawn as its picture. Twitch's TV app has none;
-// Twitch's own emotes, placed by the chat line, go first, then the channel's (7TV's before BetterTTV's before
-// FrankerFaceZ's), then the global ones. The lists are stored (the global one under its key, the CHANNELS_KEPT
-// channels opened last in as many slots, an index of those). Each service in a list is asked again on its own:
-// REFRESH_MS after it answered, RETRY_MS after it failed, keeping its emotes from before meanwhile; its emotes are
-// used as soon as it answers. Animated emotes come as their still picture, as Twitch's own are drawn here (animating
-// costs the TV's CPU every frame, and BetterTTV's animations run to megabytes), each at its own width so a row's
-// layout is known before its pictures load; a 7TV zero-width emote goes over the emote before it.
+// Chat's emote lists. Third-party emotes (the live chat settings' word emotes, as pictures unless set otherwise): the
+// 7TV, BetterTTV and FrankerFaceZ emotes that viewers with those browser extensions see, a word that names one drawn
+// as its picture. Twitch's TV app has none; Twitch's own emotes, placed by the chat line, go first, then the
+// channel's (7TV's before BetterTTV's before FrankerFaceZ's), then the global ones. The lists are stored (the global
+// one under its key, the CHANNELS_KEPT channels opened last in as many slots, an index of those). Each service in a
+// list is asked again on its own: REFRESH_MS after it answered, RETRY_MS after it failed, keeping its emotes from
+// before meanwhile; its emotes are used as soon as it answers. Animated emotes come as their still picture, as
+// Twitch's own are drawn here (animating costs the TV's CPU every frame, and BetterTTV's animations run to
+// megabytes), each at its own width so a row's layout is known before its pictures load; a 7TV zero-width emote goes
+// over the emote before it.
+// Only what the settings need is asked (chat/emote-kinds.ts): no third-party list while word emotes show as text;
+// and only while the emotes a chat line places show in more than one way, the watched channel's own emotes' ids (its
+// subscriber and follower emotes, one small query), by which its emotes are told from other channels': kept beside
+// the channel's list and asked again as a service is.
 
 import { getJson, postJson } from '../../core/http.js';
 import { load, save } from '../../core/store.js';
 import { gql } from '../api/gql.js';
 import { has, isObject } from './assets.js';
-import { ChatEmote, EmoteFinder } from './types.js';
+import { EmoteKind, emoteShow, emotesPlain, kindsDiffer, setEmoteShow, twitchKind, wordEmotes } from './emote-kinds.js';
+import { ChatEmote, EmoteFinder, EmotePart, EmoteShow } from './types.js';
 
 /** A service's emotes are asked again this long after it answered (the stored ones are used meanwhile), or after it
  * failed */
 var REFRESH_MS = 6 * 3600 * 1000;
 var RETRY_MS = 30 * 60 * 1000;
 var CHANNELS_KEPT = 8;
-var SETTING_KEY = 'twitch.chat.thirdPartyEmotes';
 var INDEX_KEY = 'twitch.emotes';
 var GLOBAL_KEY = 'twitch.emotes.global';
 var SLOT_KEY = 'twitch.emotes.';
+/** After a slot's key: the channel's own Twitch emotes */
+var OWN_KEY = '.own';
 /** Wider emotes are drawn this wide at most (width over height) */
 var MAX_RATIO = 4;
 
@@ -49,9 +56,9 @@ var PICTURES: { [kind: string]: (id: string) => string } = {
 };
 /** The services in order of precedence, by the kinds their emotes are kept with */
 var SERVICES = ['sS', 'bB', 'fg'];
-
-/** The services in order of precedence, by the kinds their emotes are kept with */
-var SERVICES = ['sS', 'bB', 'fg'];
+/** A channel's subscriber emotes of every tier and its follower emotes, asked as a guest (the same for everyone) */
+var OWN_QUERY = 'query($login: String) { user(login: $login) { id subscriptionProducts { emotes { id } } channel { localEmoteSets { ' +
+    'emotes { id } } } } }';
 
 /** An emote as kept, one string: its kind, its id, then |ratio (width over height) when not square or drawn over,
  * and |o when drawn over the emote before it */
@@ -66,6 +73,13 @@ interface List {
     emotes: Emotes;
 }
 
+/** A channel's own Twitch emotes, by their ids, and when they are to be asked again */
+interface Own {
+    due: number;
+    login: string;
+    ids: { [id: string]: number };
+}
+
 /** A kept channel: when it was last opened, its Twitch user id and the slot its list is stored in */
 interface Entry {
     at: number;
@@ -77,7 +91,6 @@ interface Index {
     channels: { [login: string]: Entry };
 }
 
-var on: boolean | null = null;
 var index: Index | null = null;
 /** The global list (undefined: not read yet) */
 var global: List | null | undefined;
@@ -90,19 +103,24 @@ var currentList: List | null = null;
 var made: { [name: string]: ChatEmote } = Object.create(null);
 var asking: { [login: string]: Promise<void> } = Object.create(null);
 var askingGlobal: Promise<void> | null = null;
+/** The channel whose own Twitch emotes are in memory, and those (null: not known) */
+var ownOf = '';
+var own: Own | null = null;
+var askingOwn: { [login: string]: Promise<void> } = Object.create(null);
+/** The chat loadEmotes was last called for, and its channel's id as given: a setting changed there asks for what it
+ * now needs */
+var loadedLogin = '';
+var loadedId: string | undefined;
 
-/** The setting: on unless switched off */
+/** Settings' switch for third-party emotes: on while word emotes show as pictures */
 export function thirdPartyEmotes(): boolean {
-    if (on === null) {
-        on = load<boolean>(SETTING_KEY) !== false;
-    }
-    return on;
+    return emoteShow('word') === 'pictures';
 }
 
-/** Switches them on or off (Settings); messages drawn after it follow it */
+/** Settings' switch: word emotes as pictures (on) or as the words typed, the other kinds as they show; messages
+ * drawn after it follow it */
 export function setThirdPartyEmotes(value: boolean): void {
-    on = value;
-    save(SETTING_KEY, value);
+    setEmoteShow('word', value ? 'pictures' : 'text');
 }
 
 /** A stored list of the right shape for login, else null */
@@ -110,6 +128,11 @@ function validList(value: unknown, login: string): List | null {
     var list = value as List | null;
     return list && list.login === login && isObject(list.emotes) && list.due instanceof Array && list.due.length === SERVICES.length &&
         typeof list.due[0] === 'number' ? list : null;
+}
+
+function validOwn(value: unknown, login: string): Own | null {
+    var o = value as Own | null;
+    return o && o.login === login && isObject(o.ids) && typeof o.due === 'number' ? o : null;
 }
 
 function validEntry(value: unknown): boolean {
@@ -156,6 +179,16 @@ function storedList(login: string): List | null {
     return entry ? validList(load<List>(SLOT_KEY + entry.slot), login) : null;
 }
 
+/** login's own Twitch emotes, read from beside its slot when another channel's were in memory */
+function ownList(login: string): Own | null {
+    if (login !== ownOf) {
+        var entry = kept().channels[login];
+        ownOf = login;
+        own = entry ? validOwn(load<Own>(SLOT_KEY + entry.slot + OWN_KEY), login) : null;
+    }
+    return own;
+}
+
 /** login's newer list, in use at once when it is the current one */
 function useList(login: string, list: List): void {
     if (login === current) {
@@ -175,45 +208,97 @@ function dueOf(list: List | null): boolean[] {
     return SERVICES.map(function (kinds, i) { return !list || now >= list.due[i]; });
 }
 
-/** Makes sure the global list and login's are here: kept ones as they are (a service whose time has come asked again
- * in the background), missing ones asked. channelId: login's Twitch user id when the caller knows it (else asked).
- * Resolves once asking ends, also when it fails */
+/** Makes sure the lists the settings need for login's chat are here (the global list and login's; its own Twitch
+ * emotes): kept ones as they are (one whose time has come asked again in the background), missing ones asked.
+ * channelId: login's Twitch user id when the caller knows it (else asked). Resolves once asking ends, also when it
+ * fails */
 export function loadEmotes(login: string, channelId?: string): Promise<void> {
-    if (!thirdPartyEmotes()) {
-        return Promise.resolve();
-    }
+    loadedLogin = login;
+    loadedId = channelId;
+    return Promise.all(askDue(login, channelId)).then(nothing);
+}
+
+/** The emote settings changed while login's chat shows: the lists they now need are asked as loadEmotes does, for
+ * the chat it was last called for only. Resolves once the missing ones came; null when none was missing */
+export function emotesNeeded(login: string): Promise<void> | null {
+    var waits = login && login === loadedLogin ? askDue(login, loadedId) : [];
+    return waits.length ? Promise.all(waits).then(nothing) : null;
+}
+
+function nothing(): void {
+    return undefined;
+}
+
+/** Asks what the settings need for login's chat and is due; the requests for what is missing altogether */
+function askDue(login: string, channelId?: string): Promise<void>[] {
     var waits: Promise<void>[] = [];
-    var g = globalList();
-    if (dueOf(g).indexOf(true) >= 0) {
+    var words = wordEmotes();
+    var kinds = kindsDiffer();
+    if (!words && !kinds) {
+        return waits;
+    }
+    var g = words ? globalList() : null;
+    if (words && dueOf(g).indexOf(true) >= 0) {
         var askedGlobal = askGlobal();
         if (!g) {
             waits.push(askedGlobal);
         }
     }
     var all = kept();
-    var list = channelList(login);
     var entry = all.channels[login];
     var now = Date.now();
     if (entry) {
         entry.at = now;
         save(INDEX_KEY, all);
     }
-    if (dueOf(list).indexOf(true) >= 0) {
+    var list = words ? channelList(login) : null;
+    if (words && dueOf(list).indexOf(true) >= 0) {
         var askedChannel = askChannel(login, channelId || (entry ? entry.id : ''), now);
         if (!list) {
             waits.push(askedChannel);
         }
     }
-    return Promise.all(waits).then(function () { return undefined; });
+    var ids = kinds ? ownList(login) : null;
+    if (kinds && (!ids || now >= ids.due)) {
+        var askedOwn = askOwn(login, now);
+        if (!ids) {
+            waits.push(askedOwn);
+        }
+    }
+    return waits;
 }
 
-/** The emote a word names in login's chat (its own before the global ones), or null when the setting is off or no
- * list is here. It looks in the lists of the chat last asked for */
+/** The emote a word names in login's chat (its own before the global ones), or null while word emotes show as text
+ * or no list is here. It looks in the lists of the chat last asked for */
 export function emoteFinder(login: string): EmoteFinder | null {
-    if (!thirdPartyEmotes()) {
+    if (!wordEmotes()) {
         return null;
     }
     return channelList(login) || globalList() ? find : null;
+}
+
+/** How login's chat shows an emote as the settings are now, or null when every emote shows as its picture: the
+ * settings are read here, once, so it is made again when they or the channel change (not per message). A word emote
+ * has no id; one the chat line places is told by kind only while the kinds show differently, by login's own emotes as
+ * far as they are known when it is asked */
+export function emoteShower(login: string): ((emote: EmotePart) => EmoteShow) | null {
+    if (emotesPlain()) {
+        return null;
+    }
+    var shows: { [kind in EmoteKind]: EmoteShow } = {
+        twitch: emoteShow('twitch'), channel: emoteShow('channel'), other: emoteShow('other'), word: emoteShow('word')
+    };
+    var telling = kindsDiffer();
+    return function (emote: EmotePart): EmoteShow {
+        if (emote.id === undefined) {
+            return shows.word;
+        }
+        if (!telling) {
+            return shows.twitch;
+        }
+        var known = ownList(login);
+        return shows[twitchKind(emote.id, emote.name, known && known.ids)];
+    };
 }
 
 function find(word: string): ChatEmote | null {
@@ -488,12 +573,57 @@ function askChannel(login: string, id: string, opened: number): Promise<void> {
     return asking[login];
 }
 
-/** Stores login's new list in its slot, or a free one, else the slot of the channel opened longest ago; a channel new
- * to the index counts as opened when it was */
-function keepChannel(login: string, id: string, list: List | null, opened: number): void {
-    if (!list) {
-        return;
+interface OwnSet {
+    emotes: ({ id: string } | null)[] | null;
+}
+
+interface OwnReply {
+    user: { id: string; subscriptionProducts: (OwnSet | null)[] | null; channel: { localEmoteSets: (OwnSet | null)[] | null } | null } | null;
+}
+
+/** Asks login's own Twitch emotes; opened: when it was opened. An answer is in use at once, stored beside its slot
+ * and due again in REFRESH_MS; without one those from before stay, asked again with the next load */
+function askOwn(login: string, opened: number): Promise<void> {
+    if (!askingOwn[login]) {
+        var done = function () { delete askingOwn[login]; };
+        askingOwn[login] = gql<OwnReply>(OWN_QUERY, { login: login }, true).then(function (data) {
+            var user = data.user;
+            var sets = user ? (user.subscriptionProducts || []).concat(user.channel && user.channel.localEmoteSets || []) : [];
+            var ids: { [id: string]: number } = Object.create(null);
+            for (var s = 0; s < sets.length; s++) {
+                var set = sets[s];
+                var emotes = set && set.emotes || [];
+                for (var i = 0; i < emotes.length; i++) {
+                    var e = emotes[i];
+                    if (e && e.id) {
+                        ids[e.id] = 1;
+                    }
+                }
+            }
+            var list: Own = { due: Date.now() + REFRESH_MS, login: login, ids: ids };
+            // (a login Twitch does not know has none, and no slot)
+            if (user) {
+                save(SLOT_KEY + slotFor(login, user.id, opened) + OWN_KEY, list);
+            }
+            if (login === ownOf) {
+                own = list;
+            }
+        }).then(done, done);
     }
+    return askingOwn[login];
+}
+
+/** Stores login's new list in its slot */
+function keepChannel(login: string, id: string, list: List | null, opened: number): void {
+    if (list) {
+        save(SLOT_KEY + slotFor(login, id, opened), list);
+        useList(login, list);
+    }
+}
+
+/** login's slot: its own, or a free one, else the slot of the channel opened longest ago; a channel new to the index
+ * counts as opened when it was */
+function slotFor(login: string, id: string, opened: number): number {
     var all = kept();
     var entry = all.channels[login];
     var slot = entry ? entry.slot : -1;
@@ -517,7 +647,6 @@ function keepChannel(login: string, id: string, list: List | null, opened: numbe
         }
     }
     all.channels[login] = { at: entry ? entry.at : opened, id: id, slot: slot };
-    save(SLOT_KEY + slot, list);
     save(INDEX_KEY, all);
-    useList(login, list);
+    return slot;
 }

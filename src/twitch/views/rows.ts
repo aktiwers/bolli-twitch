@@ -3,7 +3,8 @@
 // category), then the strip slides one tile per step (0.1 s); it walks back left the same way and never wraps. The
 // tile cut by the left edge stays in view. Tiles sit at fixed offsets (nothing is measured); a row builds a tile when
 // it first nears the view, keeps it, and draws only the ones in view plus one on each side (two ahead on the focused
-// row, ready for its slide).
+// row, ready for its slide). A row can carry its focused tile along (the Favorites tab's Move): lifted above the
+// others, it changes places with its neighbour on each step, both sliding there by a transform alone.
 
 import { h, LAYOUT_HEIGHT, LAYOUT_WIDTH, setText, toggleClass, translate } from '../../core/dom.js';
 import { KEY } from '../../core/keys.js';
@@ -12,9 +13,11 @@ import { ChannelCard, Tile, tileWidth } from './tiles.js';
 
 /** Side margin and the step between rows (72 and 441 px at 1920) */
 var MARGIN = 48;
-var ROW_STEP = 294;
+export var ROW_STEP = 294;
 /** The rows' slide (0.1 s) and a margin: a row drawn below the screen waits for it to end */
 var SLIDE_MS = 150;
+/** A lifted tile stands this much larger */
+var LIFT = ' scale(1.06)';
 
 export class Row {
     el: HTMLElement;
@@ -38,6 +41,11 @@ export class Row {
     private wantPictures = false;
     /** Pictures wait (its screen is hidden): texts change, picture addresses follow when it shows */
     private held = false;
+    /** The tile carried along (lift()) */
+    private lifted: Tile | null = null;
+    /** While one is carried: the place each tile stands at by its left (none: its own), drawn from there to its place
+     * now by a transform, so a step only changes two transforms and the tiles' transition slides them */
+    private homes: number[] = [];
 
     /** card: how it draws offline channels (Twitch's wide card when not given) */
     constructor(shelf: Shelf, private card?: ChannelCard) {
@@ -95,9 +103,15 @@ export class Row {
         }
     }
 
-    /** The tile after the last whole column (the last one Twitch's TV app draws) is one of the last distance tiles */
-    nearEnd(distance: number): boolean {
-        return this.first + this.cols >= this.items.length - distance;
+    /** Whole tiles in view */
+    get columns(): number {
+        return this.cols;
+    }
+
+    /** The tile after the last whole column (the last one Twitch's TV app draws) is one of the last distance tiles
+     * (of the first end tiles, when given) */
+    nearEnd(distance: number, end?: number): boolean {
+        return this.first + this.cols >= (end === undefined ? this.items.length : end) - distance;
     }
 
     /** Left/Right: false at the ends (nothing happens there) */
@@ -109,6 +123,71 @@ export class Row {
         this.index = to;
         this.reveal(this.first);
         return true;
+    }
+
+    /** Lifts the focused tile above the others (on) or sets it down: while lifted, shift() carries it */
+    lift(on: boolean): void {
+        toggleClass(this.el, 'bt-row--moving', on);
+        if (this.lifted) {
+            toggleClass(this.lifted.el, 'bt-tile--moving', false);
+            this.lifted = null;
+        }
+        // The slides leave their tiles a layer each: dropped with the move, each tile at its own left again
+        for (var i = 0; i < this.tiles.length; i++) {
+            var tile = this.tiles[i];
+            if (tile) {
+                if (this.homeOf(i) !== i) {
+                    tile.el.style.left = i * this.step + 'px';
+                }
+                tile.el.style.webkitTransform = '';
+            }
+        }
+        this.homes = [];
+        if (on && this.items.length) {
+            this.lifted = this.tile(this.index);
+            toggleClass(this.lifted.el, 'bt-tile--moving', true);
+            this.lifted.el.style.webkitTransform = 'translate3d(0,0,0)' + LIFT;
+        }
+    }
+
+    /** The focused tile changes places with its neighbour delta away (-1 left, 1 right), both sliding there, and
+     * focus goes with it; false at the ends */
+    shift(delta: number): boolean {
+        var from = this.index;
+        var to = from + delta;
+        if (to < 0 || to >= this.items.length) {
+            return false;
+        }
+        // A copy: the shelf's own list stays in the order it came
+        var items = this.items.slice();
+        items[from] = this.items[to];
+        items[to] = this.items[from];
+        this.items = items;
+        var tile = this.tiles[from];
+        this.tiles[from] = this.tiles[to];
+        this.tiles[to] = tile;
+        var home = this.homeOf(from);
+        this.homes[from] = this.homeOf(to);
+        this.homes[to] = home;
+        this.slide(from);
+        this.slide(to);
+        this.index = to;
+        this.reveal(this.first);
+        return true;
+    }
+
+    /** Tile i slides to place i from where it stands (its transform from its left; the transition does the rest) */
+    private slide(i: number): void {
+        var tile = this.tiles[i];
+        if (tile) {
+            tile.el.style.webkitTransform = 'translate3d(' + (i - this.homeOf(i)) * this.step + 'px,0,0)' + (tile === this.lifted ? LIFT : '');
+        }
+    }
+
+    /** Where tile i stands by its left */
+    private homeOf(i: number): number {
+        var home = this.homes[i];
+        return home === undefined ? i : home;
     }
 
     /** Focused row and focus shown (false: no tile shows focus, e.g. the menu has it). Its lifts keep their layers
@@ -202,6 +281,10 @@ export class Row {
         if (!tile) {
             tile = new Tile(this.items[i], this.card);
             tile.el.style.left = i * this.step + 'px';
+            // (built while one is carried: at its own place)
+            if (this.homes[i] !== undefined) {
+                this.homes[i] = i;
+            }
             tile.el.style.width = tileWidth(this.items[i], this.card) + 'px';
             this.strip.appendChild(tile.el);
             this.tiles[i] = tile;
