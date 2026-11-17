@@ -35,6 +35,9 @@ export interface HlsInstance {
     readonly bandwidthEstimate: number;
     /** Seconds behind the live playlist's end */
     readonly latency: number;
+    /** Where live playback in step with the broadcast stands (its target delay behind the playlist's end; null: not
+     * known) */
+    readonly liveSyncPosition: number | null;
     /** The playing frame's time as the playlist dates it */
     readonly playingDate: Date | null;
     on(event: string, listener: (event: string, data: any) => void): void;

@@ -124,6 +124,8 @@ export interface Shelf {
     id: string;
     title: string;
     items: Item[];
+    /** Its tiles are Watch History's entries: hold OK offers Remove from History */
+    forget?: boolean;
 }
 
 /** A page of a long list: the next page's cursor, or none at the end */

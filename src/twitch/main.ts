@@ -584,12 +584,14 @@ setActive({
         }
         var view = top();
         var inMenu = menu.hasFocus;
+        var boxed = exitBox.open;
         var used = heldOk.during(code, function () {
             return onKey(code);
         });
-        // OK opened a screen or moved focus into one: its repeats are not for what is focused there
-        if (code === KEY.OK && (top() !== view || menu.hasFocus !== inMenu)) {
-            heldOk.latch(now);
+        // OK opened a screen or moved focus into one: its repeats are not for what is focused there. OK or Back
+        // opened or closed the exit box: their repeats would close it again or act on Home
+        if ((code === KEY.OK && (top() !== view || menu.hasFocus !== inMenu)) || exitBox.open !== boxed) {
+            heldOk.latch(now, code);
         }
         return used;
     }

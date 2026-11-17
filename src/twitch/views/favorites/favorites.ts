@@ -48,7 +48,7 @@ import { videoItem } from '../tiles.js';
 import { PreviewPlayer, sessionPlayer } from '../channel/preview.js';
 import { favoritePreviews, GridPreview, pictureBox } from './grid-preview.js';
 import { historyMode, onHistory, onHistoryMode, refreshHistory } from '../../api/history.js';
-import { continueRow, historyKeyOf } from '../history.js';
+import { continueRow, forgetKey } from '../history.js';
 import { resumeIdsVersion } from '../player/resume.js';
 import { showsAllRow, showsLiveRow } from './rows-shown.js';
 
@@ -306,7 +306,7 @@ export class FavoritesView implements Screen {
     /** On Continue Watching: the Watch History entry the tile stands for */
     historyKey(item: Item): string {
         var row = this.stack.row;
-        return !this.inGrid && row && row.shelf.id === 'history' ? historyKeyOf(item) : '';
+        return !this.inGrid && row ? forgetKey(row.shelf, item) : '';
     }
 
     /** Move can start on this favorite: focus is on its tile in Live Now or All Favorites, and there is another to

@@ -133,7 +133,6 @@ export class HomeView implements Screen {
         this.rows.stack.setShown(false);
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
-        this.hero.pause();
         this.saveKept();
     }
 
@@ -146,7 +145,6 @@ export class HomeView implements Screen {
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
         clearTimeout(this.saveTimer);
-        this.hero.pause();
         this.unwatch();
         document.removeEventListener('visibilitychange', this.onVisible, false);
         this.rows.destroy();

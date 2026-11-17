@@ -9,8 +9,10 @@
 //   usher('v1' | 'v2' | '')                      the usher version to start with ('' the default)
 //   account(on)                                  stream tokens asked with the account (signed in) in this run: stitched
 //   levels(ms)                                   Stable Volume's input and output level over ms (dB RMS and peak; Android)
-//   fakeBreak(on)                                live playlists taken as having a commercial break (the swap runs)
-//   breakScreen(on)                              the screen told every player type has a commercial break, or not
+//   fakeBreak(on, types?)                        live playlists taken as having a commercial break (the swap runs);
+//                                                types: player types whose playlists are taken as having it too
+//   breakScreen(on, seconds?)                    the screen told every player type has a commercial break (seconds
+//                                                left of it), or not
 //   quick(on, lengths?)                          past broadcasts land quickly at starts and jumps (first bytes first), or
 //                                                not, and tell short lengths with it (lengths false: without them), from
 //                                                the next start on in this run (no argument: the device's own)
@@ -188,11 +190,11 @@ var api = {
         setQuick(on === undefined ? null : on, lengths);
         return quickHere();
     },
-    fakeBreak: function (on: boolean): void {
-        session.forceBreak(on);
+    fakeBreak: function (on: boolean, types?: string[]): void {
+        session.forceBreak(on, types);
     },
-    breakScreen: function (on: boolean): void {
-        session.showBreak(on);
+    breakScreen: function (on: boolean, seconds?: number): void {
+        session.showBreak(on, seconds);
     },
     seek: function (seconds: number): void {
         session.seek(seconds);

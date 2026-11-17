@@ -1,7 +1,7 @@
 // The progress track of past broadcasts and clips as Twitch's TV app draws it: the bar with its purple part, the white
 // knob (the focus lands on it) with the time under it, and the length at the bar's end. Seeking is Twitch's: Left and
 // Right pause and move a pending position STEP_S per press, faster the longer the key is held, never past the start
-// or the end; OK commits it. Everything moves by transforms (no layout while seeking or playing).
+// or the end; OK commits it, as does the player once the arrows rest. Everything moves by transforms (no layout while seeking or playing).
 
 import { h, setText, toggleClass } from '../../../core/dom.js';
 import { clock } from '../../../core/time.js';

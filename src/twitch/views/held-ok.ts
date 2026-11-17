@@ -3,7 +3,8 @@
 // navigation and ignores it until OK is released: its keyup (Android: bolliKey's release), another key, the app
 // hidden, or a pause longer than a remote waits before its first repeat (a release that never came). A screen whose
 // OK changed things in place (a follow, results in place of the keyboard) asks the same with holdOk(). The releases it
-// watches are passed on to what acts on OK's release (OkWatcher: a tile whose held OK opens a menu).
+// watches are passed on to what acts on OK's release (OkWatcher: a tile whose held OK opens a menu). Back is latched
+// the same way where its repeats would undo what it did (the exit box on Android).
 
 import { KEY } from '../../core/keys.js';
 
@@ -37,24 +38,27 @@ export interface OkWatcher {
 export class HeldOk {
     /** The key being handled now (0 between keys) */
     pressing = 0;
-    private latched = false;
+    /** The key whose repeats are ignored (0: none) */
+    private latched = 0;
     private last = 0;
 
-    /** OK did a navigation at now: its repeats are ignored until it is released */
-    latch(now: number): void {
-        this.latched = true;
+    /** The key (OK unless told) did its thing at now: its repeats are ignored until it is released */
+    latch(now: number, code?: number): void {
+        this.latched = code || KEY.OK;
         this.last = now;
     }
 
-    /** OK was released */
-    release(): void {
-        this.latched = false;
+    /** A key was released (none told: whichever is latched) */
+    release(code?: number): void {
+        if (!code || code === this.latched) {
+            this.latched = 0;
+        }
     }
 
-    /** A key at now: true for a held OK's repeat (ignored); any other key releases OK */
+    /** A key at now: true for a latched key's repeat (ignored); any other key releases it */
     ignore(code: number, now: number): boolean {
-        if (code !== KEY.OK || now - this.last >= GAP_MS) {
-            this.latched = false;
+        if (code !== this.latched || now - this.last >= GAP_MS) {
+            this.latched = 0;
         }
         if (!this.latched) {
             return false;
@@ -73,21 +77,19 @@ export class HeldOk {
         }
     }
 
-    /** Releases OK on its keyup, on the Android app's release (after initKeys(), which sets bolliKey) and when the
-     * app is hidden; holdOk() latches this one from now on. watcher: told of the same */
+    /** Releases a key on its keyup, on the Android app's release (after initKeys(), which sets bolliKey) and when the
+     * app is hidden; holdOk() latches this one from now on. watcher: told of OK's */
     watch(watcher?: OkWatcher): void {
         var self = this;
         shell = this;
-        var release = function (): void {
-            self.release();
-            if (watcher) {
+        var release = function (code: number): void {
+            self.release(code);
+            if (watcher && code === KEY.OK) {
                 watcher.up();
             }
         };
         document.addEventListener('keyup', function (e: KeyboardEvent) {
-            if (e.keyCode === KEY.OK) {
-                release();
-            }
+            release(e.keyCode);
         }, true);
         document.addEventListener('visibilitychange', function () {
             self.release();
@@ -99,8 +101,8 @@ export class HeldOk {
         var pass = page.bolliKey;
         if (pass) {
             page.bolliKey = function (code: number, isUp?: boolean): void {
-                if (isUp && code === KEY.OK) {
-                    release();
+                if (isUp) {
+                    release(code);
                 }
                 (pass as (code: number, isUp?: boolean) => void)(code, isUp);
             };

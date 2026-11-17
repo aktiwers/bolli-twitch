@@ -5,7 +5,8 @@
 // player type). Around the engines it owns the policy: which engine plays (engineFor: hls.js for live streams and past
 // broadcasts wherever Media Source exists, the TV's own player for clips), stitched segments that show up later (the
 // next player type), one retry
-// budget per failure episode, the remembered quality, and what is the same for every engine (seek, pause, position,
+// budget per failure episode (a network failure while the line is down uses none: the playback stands, asks nothing,
+// and goes on in place once the line answers, line.ts), the remembered quality, and what is the same for every engine (seek, pause, position,
 // buffer). A worker that cannot start sends past broadcasts to the TV's own player for the rest of the run, while a
 // live stream fails as not playable here (on the TV's own player it freezes on its first picture). Every engine start
 // gets the current pause, and a past broadcast or clip that showed a picture starts where the viewer
@@ -25,12 +26,13 @@ import { load, save } from '../../core/store.js';
 import { releaseVideo } from '../../player/video.js';
 import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
-import { PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, usherCode, UsherVersion } from '../api/playback.js';
-import { aheadOf, Delay, Engine, EngineEvents, Failure, FailureKind, Fetched, playVideo, Quality, showVideo, Source } from './engine.js';
+import { masterUrl, PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, usherCode, UsherVersion, Way, WAYS, wayTokens } from '../api/playback.js';
+import { aheadOf, Delay, dry, Engine, EngineEvents, Failure, FailureKind, Fetched, playVideo, Quality, showVideo, Source } from './engine.js';
 import { cutWindow, liveTarget, mediaSourcePlays, movedWindow, mutedRanges, parseQualities, pastBroadcast, segmentStart, Span, windowAt } from './master.js';
-import { hasAds, markAdGaps } from './ads.js';
+import { breakLeft, hasAds, markAdGaps } from './ads.js';
 import { SegmentAhead, segmentAhead } from './segment.js';
 import { stabilize } from './stable-volume.js';
+import { awaitLine, onLineBack, probe } from './line.js';
 import { startQuality } from './bandwidth.js';
 import { loadHls } from './hls-loader.js';
 import { MseEngine, quickHere } from './mse-engine.js';
@@ -75,11 +77,21 @@ export interface SessionEvents {
     stalled?(action: string): void;
     /** It cannot play */
     failed?(failure: Failure): void;
+    /** The picture stands for the line, which is down (it goes on by itself once the line is back) */
+    lineDown?(): void;
     /** The app goes to the background: the pipeline goes right after (where it stands can still be read) */
     background?(): void;
     /** A live stream's commercial break that every player type has (true; it plays on without the break, its picture
-     * standing), or its end */
-    commercial?(on: boolean): void;
+     * standing), or its end; left: when it ends (Date.now() ms) and which ad of how many plays, as Twitch tells it
+     * (told again as each playlist comes; none: not told) */
+    commercial?(on: boolean, left?: BreakLeft): void;
+}
+
+/** A commercial break's end (Date.now() ms) and which ad of how many plays */
+export interface BreakLeft {
+    endsAt: number;
+    ad: number;
+    ads: number;
 }
 
 /** What plays, for the overlay and the tests (no token or address) */
@@ -139,6 +151,12 @@ var RETRIES = 2;
 var RETRY_MS = 1000;
 /** Playback that ran this long since the last failure starts a new episode (a full retry budget) */
 var EPISODE_MS = 30 * 1000;
+/** A picture that stands has the line probed this long after (a slow segment ends most stalls by itself; hls.js
+ * says a stall itself only once it has stood a second) */
+var STALL_LOOK_MS = 500;
+/** A probe for a picture that stands with no answer this long: the viewer is told (the loading stops only once the
+ * probe has waited its whole time, line.ts: a slow line is not cut off) */
+var TELL_MS = 2000;
 
 interface Resolved {
     token: Token;
@@ -167,6 +185,8 @@ interface Outcome {
     failure: Failure;
     next?: 'type' | 'v2' | 'guest' | 'account';
     resolve?: boolean;
+    /** A probe answered after this network failure: the retry budget holds */
+    lineAnswers?: boolean;
 }
 
 interface Playback {
@@ -198,10 +218,19 @@ interface Playback {
     adsRun: number;
     adBreaks: number;
     swaps: number;
-    /** A live stream's spare: another player type's qualities, ready for a commercial break, and when it was last
-     * asked (or the engine started) */
-    spare: { type: number; qualities: Quality[]; at: number } | null;
+    /** A live stream's spare: another way's qualities, ready for a commercial break, and when it was last asked (or
+     * the engine started) */
+    spare: { way: Way; qualities: Quality[] } | null;
     spareAt: number;
+    /** Every way's qualities asked in a break (by wayKey), and when they were (their addresses carry a token that
+     * runs out) */
+    ways: { [key: string]: Quality[] };
+    waysAt: number;
+    /** The look through every way under way (one at a time), and when the last found none */
+    sweeping: Promise<string | null> | null;
+    sweptAt: number;
+    /** The quality the viewer had, while a lower one plays that a way has without the break (null: none lowered) */
+    lowered: number | null;
     /** Every player type has the commercial break now (the screen was told) */
     inBreak: boolean;
     retries: number;
@@ -237,6 +266,13 @@ interface Playback {
     failed: FailureKind | '';
     adTimer: number;
     retryTimer: number;
+    /** It stands for the line (a probe got no answer): nothing is asked until the line answers (onLineBack), and the
+     * failure to try again then (null: the engine runs, and goes on) */
+    standing: boolean;
+    lineFailure: Failure | null;
+    /** The viewer was told it stands for the line (once a drop) */
+    toldLine: boolean;
+    lookTimer: number;
 }
 
 interface Ahead {
@@ -286,6 +322,9 @@ export function videoElement(): HTMLVideoElement {
         stabilize(video);
         document.addEventListener('visibilitychange', visibilityChanged, false);
         video.addEventListener('waiting', function () {
+            if (now && now.shown) {
+                lookAtLine(now, STALL_LOOK_MS);
+            }
             if (now && now.events.buffering) {
                 now.events.buffering();
             }
@@ -560,7 +599,7 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         target: { kind: target.kind, id: target.id, startAt: startAt },
         files: target.files && target.files.length ? target.files : null, events: events, options: opts,
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
-        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, swaps: 0, spare: null, spareAt: 0, inBreak: false, retries: 0, movingSince: 0,
+        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, swaps: 0, spare: null, spareAt: 0, ways: {}, waysAt: 0, sweeping: null, sweptAt: 0, lowered: null, inBreak: false, retries: 0, movingSince: 0, standing: false, lineFailure: null, toldLine: false, lookTimer: 0,
         startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, window: null, cutting: false, wentOnAt: 0, paused: false, left: false, held: false,
         ahead: false, kept: false, keptTimer: 0, muted: [], inMuted: false, failed: '', adTimer: 0, retryTimer: 0
     };
@@ -585,7 +624,10 @@ function moveTo(p: Playback, at: number | undefined): void {
     p.target.startAt = at;
     if (p.shown) {
         seek(at);
-    } else if (p.engine && p.source) {
+        return;
+    }
+    p.at = at;
+    if (p.engine && p.source) {
         // Started, no picture yet: started again from there
         startEngine(p, p.source, null);
     }
@@ -613,6 +655,9 @@ function replay(p: Playback): void {
     }
     if (p.source && e.qualities) {
         e.qualities(p.source.qualities, p.source.quality, p.engine ? p.engine.current() : -1);
+    }
+    if (p.toldLine && e.lineDown) {
+        e.lineDown();
     }
     var moving = p.shown && !videoElement().paused;
     if (moving && e.playing) {
@@ -704,9 +749,6 @@ function startStream(p: Playback): void {
                 return;
             }
             source.level = { url: first.url, text: text, at: kept ? kept.at : Date.now() };
-            if (!live) {
-                p.muted = mutedRanges(text);
-            }
             var at = (p.shown ? p.at : p.target.startAt) || 0;
             if (kept && r.segment && r.segmentFor === at) {
                 source.segment = r.segment;
@@ -717,6 +759,10 @@ function startStream(p: Playback): void {
             }
             // Stitched segments in the last player type too: it plays (those left out) but is not remembered
             startEngine(p, source, r.token, !ads);
+            // (after the start's segment is asked and the engine started: only the playing picture needs them)
+            if (!live) {
+                p.muted = mutedRanges(text);
+            }
         }, function () {
             // The engine asks for it again and tells what is wrong
             if (!stale(p, attempt)) {
@@ -757,7 +803,7 @@ function liveFilter(p: Playback): (text: string) => string {
     return function (text: string): string {
         var r = markAdGaps(text);
         if (p === now) {
-            breakNow(p, r.ads);
+            breakNow(p, r.ads, r.ads ? breakLeft(text) : null);
             keepSpare(p);
         }
         return liveTarget(r.text);
@@ -765,41 +811,53 @@ function liveFilter(p: Playback): (text: string) => string {
 }
 
 /** Stitched segments still in what plays (every player type has the break: the swap found none without it), or not
- * any more: the screen is told when that changes */
-function breakNow(p: Playback, on: boolean): void {
-    if (on === p.inBreak) {
+ * any more: the screen is told when that changes, and while it lasts what is left of it as each playlist tells */
+function breakNow(p: Playback, on: boolean, left?: { seconds: number; ad: number; ads: number } | null): void {
+    if (on === p.inBreak && !(on && left)) {
         return;
     }
-    p.inBreak = on;
-    if (on) {
+    if (on && !p.inBreak) {
         p.adBreaks++;
     }
+    p.inBreak = on;
     if (p.events.commercial) {
-        p.events.commercial(on);
+        p.events.commercial(on, left ? { endsAt: Date.now() + left.seconds * 1000, ad: left.ad, ads: left.ads } : undefined);
     }
 }
 
 /** The test hook's: every live media playlist taken for one with a commercial break (the swap then runs as in one) */
 var breakForced = false;
+/** And the player types whose playlists are taken as having it too (the look through every way runs) */
+var typesInBreak: string[] = [];
 
-export function forceBreak(on: boolean): void {
+export function forceBreak(on: boolean, types?: string[]): void {
     breakForced = on;
+    typesInBreak = on && types ? types : [];
 }
 
-/** The test hook's: the screen told that every player type has a commercial break (true), or that it ended */
-export function showBreak(on: boolean): void {
+/** The test hook's: the screen told that every player type has a commercial break (true; seconds: what is left of
+ * it, as the first of two ads), or that it ended */
+export function showBreak(on: boolean, seconds?: number): void {
     if (now) {
-        breakNow(now, on);
+        breakNow(now, on, on && seconds ? { seconds: seconds, ad: 1, ads: 2 } : null);
     }
 }
 
-/** A live stream's media playlists with a commercial break go on as the same quality's playlist of another player
- * type without it: the running hls.js simply goes on (the types' playlists line up, the same segments with the same
- * numbers, dates and addresses; only the stitched ones differ), so nothing restarts. The spare type is asked first,
- * then all others at once; with every type in the break the text as it is (its stitched segments become gaps) */
+/** A live stream's media playlists with a commercial break go on as the same quality's playlist of another way of
+ * asking the stream without it: the running hls.js simply goes on (the ways' playlists line up, the same segments with
+ * the same numbers, dates and addresses; only the stitched ones differ), so nothing restarts. The spare is asked
+ * first, then every way (sweep); with none found the text as it is (its stitched segments become gaps). The break's
+ * end (a playlist of p's own without it) gives back a quality lowered for it */
 function swapper(p: Playback): (url: string, text: string) => Promise<string> | null {
     return function (url: string, text: string): Promise<string> | null {
-        if (p !== now || !(breakForced || hasAds(text))) {
+        if (p !== now) {
+            return null;
+        }
+        if (!(breakForced || hasAds(text))) {
+            if (p.lowered !== null && p.engine) {
+                p.engine.setQuality(p.lowered);
+                p.lowered = null;
+            }
             return null;
         }
         var name = '';
@@ -810,9 +868,9 @@ function swapper(p: Playback): (url: string, text: string) => Promise<string> | 
             }
         }
         var spare = p.spare;
-        var first = spare && spare.type !== p.type ? levelOf(spare.qualities, name) : Promise.resolve(null);
+        var first = spare ? levelOf(spare.qualities, name) : Promise.resolve(null);
         return first.then(function (clean) {
-            return clean !== null && !hasAds(clean) ? clean : otherTypes(p, name, spare ? spare.type : -1);
+            return clean !== null && !inBreak(spare ? spare.way : null, clean) && linesUp(text, clean) ? clean : soon(sweep(p, name, text));
         }).then(function (clean) {
             if (clean !== null && p === now) {
                 p.swaps++;
@@ -822,58 +880,241 @@ function swapper(p: Playback): (url: string, text: string) => Promise<string> | 
     };
 }
 
-/** The media playlist of the quality called name in list (the first when none is), or null when it cannot be had */
-function levelOf(list: Quality[], name: string): Promise<string | null> {
-    var q = list[0];
+/** A look through every way waits this long before the playlist goes on as it is (its stitched segments gaps); the
+ * look goes on, and the next playlist (2 s later) takes what it found */
+var SWEEP_WAIT_MS = 1500;
+/** A look that found no way without the break is made again after this (the break's next ad may differ per way) */
+var SWEEP_MS = 30 * 1000;
+/** Ways asked at a time in a look, in WAYS' order (as many as the TV's browser fetches from one host at once) */
+var WAVE = 6;
+
+function wayKey(w: Way): string {
+    return w.type + '/' + w.platform + '/' + w.usher;
+}
+
+/** The way p plays as */
+function ownWay(p: Playback): Way {
+    return { type: PLAYER_TYPES[p.playingType], platform: p.usher === 'v2' ? 'web' : '', usher: p.usher };
+}
+
+/** found, or null once SWEEP_WAIT_MS passed first */
+function soon(found: Promise<string | null>): Promise<string | null> {
+    return new Promise(function (resolve) {
+        var timer = setTimeout(function () { resolve(null); }, SWEEP_WAIT_MS);
+        found.then(function (text) {
+            clearTimeout(timer);
+            resolve(text);
+        }, function () {
+            clearTimeout(timer);
+            resolve(null);
+        });
+    });
+}
+
+/** Whether way's playlist text has the break (or the test hook says its type has) */
+function inBreak(way: Way | null, text: string): boolean {
+    return hasAds(text) || !!way && typesInBreak.indexOf(way.type) >= 0;
+}
+
+/** The index of the quality called name in list, or -1 */
+function named(list: Quality[], name: string): number {
     for (var i = 0; i < list.length; i++) {
         if (list[i].name === name) {
-            q = list[i];
+            return i;
         }
     }
+    return -1;
+}
+
+/** The media playlist of the quality called name in list, or null when there is none or it cannot be had */
+function levelOf(list: Quality[], name: string): Promise<string | null> {
+    var q = list[named(list, name)];
     return q ? getText(q.url, 5000).then(null, function () { return null; }) : Promise.resolve(null);
 }
 
-/** The first player type (in SPARE_ORDER; not p's, nor skip) whose quality called name has no stitched segments, all
- * asked at once: its playlist (that type becomes the spare), or null */
-function otherTypes(p: Playback, name: string, skip: number): Promise<string | null> {
-    return Promise.all(PLAYER_TYPES.map(function (playerType, type) {
-        if (type === p.type || type === skip) {
+/** For i from 0 to n - 1, ask(i) WAVE at a time: the first i (in order) whose answer is not null, with the answer;
+ * null when none is, or once p no longer plays */
+function inWaves<T>(p: Playback, n: number, ask: (i: number) => Promise<T | null>): Promise<{ i: number; found: T } | null> {
+    function wave(from: number): Promise<{ i: number; found: T } | null> {
+        if (from >= n || p !== now) {
             return Promise.resolve(null);
         }
-        return resolveStream(p.target, type, p.usher, p.withAccount).then(function (r) {
-            return levelOf(r.qualities, name).then(function (text) {
-                return text !== null && !hasAds(text) ? { type: type, qualities: r.qualities, text: text } : null;
-            });
-        }, function () { return null; });
-    })).then(function (found) {
-        for (var i = 0; i < SPARE_ORDER.length; i++) {
-            var f = found[SPARE_ORDER[i]];
-            if (f) {
-                if (p === now) {
-                    p.spare = { type: f.type, qualities: f.qualities, at: Date.now() };
+        var asked: Promise<T | null>[] = [];
+        for (var i = from; i < Math.min(n, from + WAVE); i++) {
+            asked.push(ask(i).then(null, function () { return null; }));
+        }
+        return Promise.all(asked).then(function (answers) {
+            for (var j = 0; j < answers.length; j++) {
+                if (answers[j] !== null) {
+                    return { i: from + j, found: answers[j] as T };
                 }
-                return f.text;
             }
+            return wave(from + WAVE);
+        });
+    }
+    return wave(0);
+}
+
+/** Every other way's playlist of the quality called name, in WAYS' order, until one has no break and lines up with
+ * text: it is the spare, and its playlist is the answer. With none, the best lower quality a way has without the
+ * break plays meanwhile (null: the playlist goes on as it is until hls.js asks for that one). The ways' tokens are
+ * asked in one query and their qualities kept for SPARE_MS; one look at a time, and after one that found nothing
+ * none for SWEEP_MS */
+function sweep(p: Playback, name: string, text: string): Promise<string | null> {
+    if (p.sweeping || Date.now() - p.sweptAt < SWEEP_MS || !p.source) {
+        return Promise.resolve(null);
+    }
+    var own = wayKey(ownWay(p));
+    var ways = WAYS.filter(function (w) { return wayKey(w) !== own; });
+    var lists: (Quality[] | null)[] = [];
+    var fresh = Date.now() - p.waysAt < SPARE_MS;
+    if (!fresh) {
+        p.ways = {};
+    }
+    var tokens: Promise<(Token | null)[] | null> = fresh ? Promise.resolve(null) :
+        wayTokens(p.target.id, ways, p.withAccount).then(null, function () { return []; });
+    var listOf = function (tk: (Token | null)[] | null, i: number): Promise<Quality[] | null> {
+        var k = wayKey(ways[i]);
+        var t = tk && tk[i];
+        if (p.ways[k] || !t) {
+            return Promise.resolve(p.ways[k] || null);
+        }
+        var url = masterUrl('live', p.target.id, t);
+        return getText(url, 5000).then(function (master) {
+            return (p.ways[k] = parseQualities(master, url).filter(mediaSourcePlays));
+        }, function () { return null; });
+    };
+    var done = function (found: string | null): string | null {
+        p.sweeping = null;
+        if (found === null && p.lowered === null) {
+            p.sweptAt = Date.now();
+        }
+        return found;
+    };
+    p.sweeping = tokens.then(function (tk) {
+        if (tk) {
+            p.waysAt = Date.now();
+        }
+        return inWaves(p, ways.length, function (i) {
+            return listOf(tk, i).then(function (q) {
+                lists[i] = q;
+                return q ? levelOf(q, name) : null;
+            }).then(function (other) {
+                return other !== null && !inBreak(ways[i], other) && linesUp(text, other) ? other : null;
+            });
+        });
+    }).then(function (hit) {
+        if (!hit) {
+            return lower(p, ways, lists, name, text);
+        }
+        if (p === now) {
+            p.spare = { way: ways[hit.i], qualities: lists[hit.i] as Quality[] };
+        }
+        return hit.found;
+    }).then(done, function () { return done(null); });
+    return p.sweeping;
+}
+
+/** No way has the quality called name without the break: of the ways without that quality, the best quality p's
+ * stream also has (not above the viewer's choice) without the break plays until it ends, through that way (its
+ * engine switches to it from the next segment; the viewer's choice comes back with the break's end). Always null */
+function lower(p: Playback, ways: Way[], lists: (Quality[] | null)[], name: string, text: string): Promise<null> {
+    var have = p.source ? p.source.qualities : [];
+    var floor = p.lowered !== null ? p.lowered : p.source ? p.source.quality : -1;
+    var picks: { way: number; q: Quality; at: number }[] = [];
+    lists.forEach(function (list, i) {
+        if (!list || named(list, name) >= 0) {
+            return;
+        }
+        for (var j = 0; j < list.length; j++) {
+            var at = named(have, list[j].name);
+            if (at >= 0 && at >= floor) {
+                picks.push({ way: i, q: list[j], at: at });
+                return;
+            }
+        }
+    });
+    // (have is best first: the best quality first, in WAYS' order within one)
+    picks.sort(function (a, b) { return a.at - b.at || a.way - b.way; });
+    return inWaves(p, picks.length, function (k) {
+        return getText(picks[k].q.url, 5000).then(function (other) {
+            return !inBreak(ways[picks[k].way], other) && linesUp(text, other) ? other : null;
+        });
+    }).then(function (hit) {
+        if (hit && p === now && p.engine) {
+            var pick = picks[hit.i];
+            p.spare = { way: ways[pick.way], qualities: lists[pick.way] as Quality[] };
+            if (p.lowered === null) {
+                p.lowered = p.source ? p.source.quality : -1;
+            }
+            p.engine.setQuality(pick.at);
         }
         return null;
     });
 }
 
-/** Keeps p's spare as its media playlists come (every 2 s while live plays): the first type of SPARE_ORDER that is
- * not p's, resolved SPARE_FIRST_MS after the engine started and then every SPARE_MS (its addresses carry a token that
- * runs out) */
+/** Whether two live media playlists number their segments alike: no stream segment that both number has two dates
+ * (a way whose numbers stood for other segments would have hls.js play the wrong ones); nothing to compare: alike */
+function linesUp(a: string, b: string): boolean {
+    var da = datesByNumber(a);
+    var db = datesByNumber(b);
+    for (var n in da) {
+        if (db[n] !== undefined && Math.abs(da[n] - db[n]) > 1000) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** The date of each stream segment (titled live) that has one, by its sequence number */
+function datesByNumber(text: string): { [n: string]: number } {
+    var out: { [n: string]: number } = {};
+    var m = /#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(text);
+    var n = m ? parseInt(m[1], 10) : 0;
+    var date = 0;
+    var live = false;
+    var lines = text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf('#EXT-X-PROGRAM-DATE-TIME:') === 0) {
+            date = Date.parse(line.slice(25));
+        } else if (line.indexOf('#EXTINF:') === 0) {
+            live = /,live\s*$/.test(line);
+        } else if (line && line.charAt(0) !== '#') {
+            if (live && date) {
+                out[n] = date;
+            }
+            n++;
+            date = 0;
+            live = false;
+        }
+    }
+    return out;
+}
+
+/** Keeps p's spare as its media playlists come (every 2 s while live plays): asked SPARE_FIRST_MS after the engine
+ * started (the first type of SPARE_ORDER that is not p's), then again every SPARE_MS (its addresses carry a token
+ * that runs out) */
 function keepSpare(p: Playback): void {
     var t = Date.now();
     if (t - p.spareAt < (p.spare ? SPARE_MS : SPARE_FIRST_MS)) {
         return;
     }
     p.spareAt = t;
-    var type = SPARE_ORDER[0] === p.type ? SPARE_ORDER[1] : SPARE_ORDER[0];
-    resolveStream(p.target, type, p.usher, p.withAccount).then(function (r) {
-        if (p === now) {
-            p.spare = { type: type, qualities: r.qualities, at: Date.now() };
+    var type = SPARE_ORDER[0] === p.playingType ? SPARE_ORDER[1] : SPARE_ORDER[0];
+    var way = p.spare ? p.spare.way : { type: PLAYER_TYPES[type], platform: p.usher === 'v2' ? 'web' : '', usher: p.usher };
+    wayTokens(p.target.id, [way], p.withAccount).then(function (tk) {
+        var token = tk[0];
+        if (!token) {
+            return undefined;
         }
-    }, noop);
+        var url = masterUrl('live', p.target.id, token);
+        return getText(url, 10000).then(function (master) {
+            if (p === now) {
+                p.spare = { way: way, qualities: parseQualities(master, url).filter(mediaSourcePlays) };
+            }
+        });
+    }).then(null, noop);
 }
 
 /** A past broadcast's media playlists on the Media Source engine: one date tag, an end while it records, and cut to
@@ -1040,6 +1281,10 @@ function engineEvents(p: Playback, run: number): EngineEvents {
             }
             if (action) {
                 noteStall(p.target.id, action);
+            } else if (p.standing) {
+                tellLine(p);
+            } else {
+                lookAtLine(p, 0);
             }
             if (p.events.stalled) {
                 p.events.stalled(action);
@@ -1049,9 +1294,104 @@ function engineEvents(p: Playback, run: number): EngineEvents {
             if (mine()) {
                 failed(p, { failure: failure });
             }
+        },
+        lost: function () {
+            if (mine()) {
+                lookAtLine(p, 0);
+            }
         }
     };
 }
+
+/** The picture stands, or a request for it got no answer: the line is probed (ms later; a stall the picture has left
+ * by then asks nothing) and, with no answer, p stands for it */
+function lookAtLine(p: Playback, ms: number): void {
+    if (p.standing || p.lookTimer || p.paused || p.held) {
+        return;
+    }
+    var run = p.run;
+    var mine = function (): boolean {
+        return p === now && run === p.run;
+    };
+    p.lookTimer = setTimeout(function () {
+        p.lookTimer = 0;
+        var v = videoElement();
+        if (!mine() || p.standing || (ms && (v.seeking || !dry(v)))) {
+            return;
+        }
+        var tell = setTimeout(function () {
+            if (mine() && dry(v)) {
+                tellLine(p);
+            }
+        }, TELL_MS);
+        probe().then(function (answered) {
+            clearTimeout(tell);
+            if (!mine()) {
+                return;
+            }
+            if (!answered) {
+                standForLine(p, null);
+            } else if (!p.standing) {
+                // (told for a slow answer: told again at the next drop)
+                p.toldLine = false;
+            }
+        });
+    }, ms) as unknown as number;
+}
+
+/** p stands for the line: its engine asks nothing more (what is buffered still plays) and the line is watched for its
+ * return (onLineBack goes on with it); f: the failure to try again then (the engine stopped) */
+function standForLine(p: Playback, f: Failure | null): void {
+    p.lineFailure = f;
+    if (p.standing) {
+        return;
+    }
+    p.standing = true;
+    noteStall(p.target.id, 'stands for the line');
+    if (p.engine && p.engine.wait) {
+        p.engine.wait(true);
+    }
+    watchLine(p);
+    if (f || dry(videoElement())) {
+        tellLine(p);
+    }
+}
+
+/** The line is watched while p stands for it, and only while it plays: paused or held, nobody waits on it (resuming
+ * watches again, and the first answer goes on) */
+function watchLine(p: Playback): void {
+    awaitLine(p.standing && !p.paused && !p.held);
+}
+
+/** The viewer is told the picture stands for the line, once a drop (what is still buffered plays first) */
+function tellLine(p: Playback): void {
+    if (!p.toldLine) {
+        p.toldLine = true;
+        if (p.events.lineDown) {
+            p.events.lineDown();
+        }
+    }
+}
+
+/** The line answers again: what stands for it goes on at once, in place (its engine loads from where the video
+ * stands), or a failure it stopped for is tried again outside the retry budget */
+onLineBack(function () {
+    var p = now;
+    if (!p || !p.standing) {
+        return;
+    }
+    var f = p.lineFailure;
+    p.standing = false;
+    p.toldLine = false;
+    p.lineFailure = null;
+    noteStall(p.target.id, 'the line is back');
+    if (f) {
+        p.retries = 0;
+        retry(p, f, 0);
+    } else if (p.engine && p.engine.wait) {
+        p.engine.wait(false);
+    }
+});
 
 /** A live stream on the TV's own player: its playlist looked at for stitched segments every AD_CHECK_MS from the
  * first picture on (the start was checked already), not while paused or in the background */
@@ -1188,6 +1528,22 @@ function failed(p: Playback, o: Outcome): void {
             return;
         }
     }
+    if (f.kind === 'network' && !o.lineAnswers) {
+        // The line down: no try uses up the budget, nothing is asked until it is back
+        var run = p.run;
+        var resolving = p.resolving;
+        probe().then(function (answered) {
+            if (p !== now || run !== p.run || resolving !== p.resolving) {
+                return;
+            }
+            if (answered) {
+                failed(p, { failure: f, lineAnswers: true });
+            } else {
+                standForLine(p, f);
+            }
+        });
+        return;
+    }
     if ((f.kind === 'network' || f.kind === 'media') && retry(p, f)) {
         return;
     }
@@ -1197,8 +1553,9 @@ function failed(p: Playback, o: Outcome): void {
     }
 }
 
-/** Tries again after a network or media failure, while the episode's budget lasts */
-function retry(p: Playback, f: Failure): boolean {
+/** Tries again after a network or media failure, while the episode's budget lasts (after ms: none, the retry's
+ * number times RETRY_MS) */
+function retry(p: Playback, f: Failure, ms?: number): boolean {
     var t = Date.now();
     if (p.movingSince && t - p.movingSince >= EPISODE_MS) {
         p.retries = 0;
@@ -1222,7 +1579,7 @@ function retry(p: Playback, f: Failure): boolean {
             p.files = null;
             restart(p);
         }
-    }, RETRY_MS * p.retries) as unknown as number;
+    }, ms === undefined ? RETRY_MS * p.retries : ms) as unknown as number;
     return true;
 }
 
@@ -1276,6 +1633,7 @@ function hold(p: Playback): void {
         return;
     }
     p.held = true;
+    watchLine(p);
     drawVideo();
     videoElement().pause();
     if (p.engine) {
@@ -1297,6 +1655,7 @@ function unhold(p: Playback): void {
         return;
     }
     p.held = false;
+    watchLine(p);
     if (!p.paused) {
         playOn(p);
         if (p.engine) {
@@ -1366,6 +1725,8 @@ export function stop(): void {
         clearTimeout(p.adTimer);
         clearTimeout(p.retryTimer);
         clearTimeout(p.keptTimer);
+        clearTimeout(p.lookTimer);
+        awaitLine(false);
         if (p.engine) {
             p.engine.stop();
         }
@@ -1420,6 +1781,8 @@ export function setQuality(index: number): void {
     }
     var q = p.source.qualities[index] || null;
     p.source.quality = q ? index : -1;
+    // (the viewer's choice holds also through a break that lowered it)
+    p.lowered = null;
     if (p.options.remember !== false) {
         rememberQuality(q);
     }
@@ -1461,6 +1824,7 @@ export function pause(): void {
     var p = now;
     if (p) {
         p.paused = true;
+        watchLine(p);
         videoElement().pause();
         if (p.engine) {
             p.engine.paused(true);
@@ -1475,6 +1839,7 @@ export function resume(): void {
     var p = now;
     if (p) {
         p.paused = false;
+        watchLine(p);
         playOn(p);
         if (p.engine) {
             p.engine.paused(false);
@@ -1482,9 +1847,13 @@ export function resume(): void {
     }
 }
 
-/** Seconds played (0 when nothing plays) */
+/** Seconds played (0 when nothing plays); until a past broadcast's or clip's first picture, where it starts (the
+ * video still stands in the last stream) */
 export function position(): number {
-    return now ? videoElement().currentTime || 0 : 0;
+    if (!now) {
+        return 0;
+    }
+    return now.shown || now.target.kind === 'live' ? videoElement().currentTime || 0 : now.at;
 }
 
 export function bufferedAhead(): number {
@@ -1493,8 +1862,13 @@ export function bufferedAhead(): number {
 
 /** The whole video's seconds (past broadcasts, clips; 0 live or not known yet) */
 export function duration(): number {
-    var d = now && now.engine && now.engine.length && now.engine.length() || videoElement().duration;
-    return now && now.target.kind !== 'live' && isFinite(d) ? d : 0;
+    if (!now || now.target.kind === 'live') {
+        return 0;
+    }
+    // (until the first picture the video's length is the last stream's: a live preview's 40 s made a position kept
+    // far into a past broadcast look like its end, and leaving forgot it)
+    var d = now.engine && now.engine.length && now.engine.length() || (now.shown ? videoElement().duration : 0);
+    return isFinite(d) ? d : 0;
 }
 
 export function playbackState(): PlaybackState | null {

@@ -1,6 +1,7 @@
-// Twitch's picture addresses at the sizes Twitch's TV app asks: stream previews 276x155 (the Home hero 540x304),
-// box art 138x184, video and clip previews 320x180, avatars 50/70/150/300. Twitch's picture server cuts any size,
-// so each helper takes a template ({width}x{height}) or an address already sized and gives the size asked.
+// Twitch's picture addresses at the sizes Twitch's TV app asks: stream previews 276x155 (the Home hero 540x304; Bolli
+// stretches the tile's own), box art 138x184, video and clip previews 320x180, avatars 50/70/150/300. Twitch's picture
+// server cuts any size, so each helper takes a template ({width}x{height}) or an address already sized and gives the
+// size asked.
 // Twitch's TV app has stand-ins for stream previews and box art only: a video without a preview stays empty there,
 // and Twitch's replies already carry its default avatar for an account without one.
 
@@ -40,21 +41,8 @@ export function previewAt(url: string, width: number): string {
     return wideAt(url, width);
 }
 
-/** The widest size a screen drew of each preview (by its address with the size taken out), wider than its tile's */
-var drawn: { [key: string]: number } = {};
-var drawnCount = 0;
-var DRAWN_MAX = 200;
-
-/** A preview at a bigger width than its tile's (16:9), kept in mind as drawn so a player opened from it starts with it */
-export function wideAt(url: string, width: number): string {
-    var key = sized(url, 0, 0);
-    if (width > (drawn[key] || 0)) {
-        if (++drawnCount > DRAWN_MAX) {
-            drawn = {};
-            drawnCount = 0;
-        }
-        drawn[key] = width;
-    }
+/** A preview at a bigger width than its tile's (16:9) */
+function wideAt(url: string, width: number): string {
     return sized(url, width, Math.round(width * 9 / 16));
 }
 
@@ -62,13 +50,12 @@ export function wideAt(url: string, width: number): string {
 export var STILL_WIDTH = 1280;
 
 /** The pictures of a stream's preview or a video's or clip's for a player to show while it starts, best last: the
- * widest already drawn (the tile's own, or the hero's), then the screen's size; none without a real picture */
+ * tile's own (drawn already), then the screen's size; none without a real picture */
 export function stillsOf(url: string): string[] {
     if (!url || PROCESSING.test(url) || url.indexOf('/ttv-static/') >= 0) {
         return [];
     }
-    var width = drawn[sized(url, 0, 0)];
-    return [width ? sized(url, width, Math.round(width * 9 / 16)) : url, sized(url, STILL_WIDTH, Math.round(STILL_WIDTH * 9 / 16))];
+    return [url, wideAt(url, STILL_WIDTH)];
 }
 
 /** A stream preview for a tile, 276x155 */

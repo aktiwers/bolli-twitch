@@ -55,8 +55,13 @@ export function historyItem(w: Watched): Item | null {
     return ghost;
 }
 
+/** On a row of Watch History's entries, the entry the tile stands for (none elsewhere) */
+export function forgetKey(shelf: Shelf, item: Item): string {
+    return shelf.forget ? historyKeyOf(item) : '';
+}
+
 /** The Watch History entry a tile stands for (api/history.ts keyOf) */
-export function historyKeyOf(item: Item): string {
+function historyKeyOf(item: Item): string {
     return item.kind === 'video' ? 'v' + item.video.id : item.kind === 'stream' ? 'c' + item.stream.channel.id :
         item.kind === 'channel' ? 'c' + item.channel.id : '';
 }
@@ -84,7 +89,7 @@ export function continueRow(): Shelf | null {
             items.push(all[i] as Item);
         }
     }
-    return items.length ? { id: 'history', title: 'Continue Watching', items: items } : null;
+    return items.length ? { id: 'history', title: 'Continue Watching', items: items, forget: true } : null;
 }
 
 /** The History page's rows by day, each only when it has tiles */
@@ -110,7 +115,7 @@ export function historyDays(now: number): Shelf[] {
     var shelves: Shelf[] = [];
     for (var k = 0; k < days.length; k++) {
         if (days[k].items.length) {
-            shelves.push({ id: days[k].id, title: days[k].title, items: days[k].items });
+            shelves.push({ id: days[k].id, title: days[k].title, items: days[k].items, forget: true });
         }
     }
     return shelves;
@@ -232,7 +237,7 @@ export class HistoryView implements Screen {
     /** Remove from History on the days' tiles (Recently Watched Channels has the channels of them all: none there) */
     historyKey(item: Item): string {
         var row = this.stack.row;
-        return row && row.shelf.id !== 'history-channels' ? historyKeyOf(item) : '';
+        return row ? forgetKey(row.shelf, item) : '';
     }
 
     onKey(code: number): boolean {

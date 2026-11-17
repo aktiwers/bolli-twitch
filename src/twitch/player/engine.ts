@@ -69,6 +69,8 @@ export interface EngineEvents {
     stalled(action: string): void;
     /** It cannot go on */
     failed(failure: Failure): void;
+    /** A request for the stream got no answer (it is asked again): the line may be down */
+    lost?(): void;
 }
 
 /** A playlist's text as fetched, and when (Date.now()) */
@@ -102,6 +104,8 @@ export interface Engine {
     length?(): number;
     /** The past broadcast's window moved on (Source.whole): hls.js gets its media playlist again through the filter */
     refresh?(): void;
+    /** The line is down (true): nothing more is asked; back (false): the loading goes on from where the video stands */
+    wait?(on: boolean): void;
     /** How far a live stream is behind (the test hook; null when not known) */
     liveDelay?(): Delay | null;
 }
@@ -110,6 +114,14 @@ export interface Engine {
 export interface Delay {
     edge: number;
     broadcast: number;
+}
+
+/** Less than this buffered ahead (s): the picture has run dry, or is about to */
+var DRY_S = 0.5;
+
+/** Whether the video has run dry where it stands (or is about to) */
+export function dry(video: HTMLVideoElement): boolean {
+    return aheadOf(video) < DRY_S;
 }
 
 /** Seconds buffered ahead of the video's playhead */

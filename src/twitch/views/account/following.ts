@@ -93,7 +93,6 @@ export class FollowingView implements Screen {
         this.rows.stack.setShown(false);
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
-        this.hero.pause();
     }
 
     /** Under a player: pictures for the focused row only */
@@ -106,7 +105,6 @@ export class FollowingView implements Screen {
         document.removeEventListener('visibilitychange', this.onVisible, false);
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
-        this.hero.pause();
         this.rows.destroy();
     }
 

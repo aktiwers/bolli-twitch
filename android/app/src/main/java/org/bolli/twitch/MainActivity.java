@@ -133,9 +133,10 @@ public class MainActivity extends Activity {
             return super.dispatchKeyEvent(e);
         }
         // Down (also its repeats while held); up only for OK, as holding OK
-        // is a key of its own (the page has no use for the others)
+        // is a key of its own, and Back, whose repeats a page may ignore
+        // until it is released (the others' are of no use to the page)
         boolean up = e.getAction() == KeyEvent.ACTION_UP;
-        if (!up || code == 13) {
+        if (!up || code == 13 || code == 461) {
             web.evaluateJavascript("window.bolliKey&&bolliKey(" + code + "," + up + ")", null);
         }
         return true;

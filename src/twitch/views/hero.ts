@@ -1,18 +1,18 @@
 // The top half of Home as Twitch's TV app draws it: a picture stretched across the width under a dark gradient, the
 // category's box art (a blank box without one), LIVE NOW, a line such as the channel playing the category, and a
 // title in at most two lines; lines without text are left out and the rest stay centred on the box art. heroOf says
-// what to show for a tile on Home, followingHeroOf on Following (HeroModel). Built once; show() changes texts at
-// once and the pictures once focus rests while keys repeat (a screen showing again or its first tiles coming draw
-// them at once). Pictures focus can reach next are fetched ahead, so they come from the cache when it moves there.
+// what to show for a tile on Home, followingHeroOf on Following (HeroModel). Built once; show() changes it all at
+// once, on every step: the picture is the tile's own (already fetched for the tile, so no wait and a small decode),
+// stretched. A bigger picture cost the TV a decode per step and memory for layers drawn ahead, and browsing felt
+// slower. Pictures focus can reach next are fetched ahead, so they come from the cache when it moves there.
 
 import { h, setShown, setText, toggleClass } from '../../core/dom.js';
-import { previewAt, wideAt } from '../api/pictures.js';
 import { Item, Stream } from '../api/types.js';
 import { blankBoxIcon } from './icons.js';
 import { ago, setSource } from './tiles.js';
 
 export interface HeroModel {
-    /** The big picture and the box art ('' for none: the blank box) */
+    /** The big picture (the tile's own) and the box art ('' for none: the blank box) */
     picture: string;
     art: string;
     /** LIVE NOW over the lines */
@@ -23,9 +23,6 @@ export interface HeroModel {
     line1: string;
     line2: string;
 }
-
-/** Twitch asks the hero's picture this wide (it shows it 1920 wide) */
-var HERO_WIDTH = 540;
 
 /** A tile with nothing to picture: the blank box and LIVE NOW alone */
 var BLANK: HeroModel = { picture: '', art: '', live: true, line1: '', line2: '' };
@@ -49,14 +46,14 @@ export function heroOf(item: Item): HeroModel {
     }
     if (item.kind === 'video' || item.kind === 'clip') {
         var still = item.kind === 'video' ? item.video.preview : item.clip.thumbnail;
-        return { picture: still ? wideAt(still, HERO_WIDTH) : '', art: '', live: false, line1: '', line2: '' };
+        return { picture: still || '', art: '', live: false, line1: '', line2: '' };
     }
     var s: Stream | undefined = item.kind === 'stream' ? item.stream : item.game.topStream;
     if (!s) {
         return BLANK;
     }
     return {
-        picture: previewAt(s.preview, HERO_WIDTH),
+        picture: s.preview || '',
         art: s.game ? s.game.boxArt : '',
         live: true,
         // Twitch draws this line only with both the channel and the category
@@ -76,9 +73,6 @@ export function followingHeroOf(item: Item): HeroModel {
 
 /** Pictures fetched ahead, kept so they are not collected before the cache has them */
 var AHEAD = 8;
-/** A show() this soon after the last one is a repeating key: its pictures wait until focus rests this long */
-var REPEAT_MS = 150;
-var REST_MS = 200;
 /** Fetched-ahead addresses remembered (then forgotten all at once) */
 var FETCHED_MAX = 400;
 
@@ -92,8 +86,6 @@ export class Hero {
     private top: HTMLElement;
     private line1: HTMLElement;
     private line2: HTMLElement;
-    private lastShow = 0;
-    private restTimer = 0;
     private ahead: HTMLImageElement[] = [];
     private fetched: { [url: string]: boolean } = {};
     private fetchedCount = 0;
@@ -114,9 +106,7 @@ export class Hero {
         setShown(this.el, false);
     }
 
-    /** atOnce: not a key (the screen shows again, its first tiles came): the pictures now, and the next show is not
-     * taken for a repeat */
-    show(m: HeroModel, atOnce?: boolean): void {
+    show(m: HeroModel): void {
         setShown(this.el, true);
         var offline = !!m.offline;
         setText(this.top, offline ? 'OFFLINE' : 'LIVE NOW');
@@ -126,18 +116,13 @@ export class Hero {
         showLine(this.line1, !!m.line1);
         setText(this.line2, m.line2);
         showLine(this.line2, !!m.line2);
-        var now = Date.now();
-        var repeating = !atOnce && now - this.lastShow < REPEAT_MS;
-        this.lastShow = atOnce ? 0 : now;
-        clearTimeout(this.restTimer);
-        if (repeating) {
-            var self = this;
-            this.restTimer = setTimeout(function () {
-                self.pictures(m);
-            }, REST_MS) as unknown as number;
-        } else {
-            this.pictures(m);
-        }
+        setSource(this.pic, m.picture);
+        // A banner keeps its own shape (Twitch draws it 1280 wide from the top); previews are 16:9
+        toggleClass(this.pic, 'bt-hero-pic--banner', offline);
+        // Without a picture the page colour shows, as in Twitch's app
+        setShown(this.shade, !!m.picture);
+        setSource(this.art, m.art);
+        toggleClass(this.artBox, 'bt-hero-art--blank', !m.art);
     }
 
     /** Its pictures are in (loaded or failed) */
@@ -153,25 +138,9 @@ export class Hero {
         }
     }
 
-    /** Stops a picture change still waiting (the screen is hidden) */
-    pause(): void {
-        clearTimeout(this.restTimer);
-    }
-
     /** Gone until the next show() (no tile to show) */
     hide(): void {
-        this.pause();
         setShown(this.el, false);
-    }
-
-    private pictures(m: HeroModel): void {
-        setSource(this.pic, m.picture);
-        // A banner keeps its own shape (Twitch draws it 1280 wide from the top); previews are 16:9
-        toggleClass(this.pic, 'bt-hero-pic--banner', !!m.offline);
-        // Without a picture the page colour shows, as in Twitch's app
-        setShown(this.shade, !!m.picture);
-        setSource(this.art, m.art);
-        toggleClass(this.artBox, 'bt-hero-art--blank', !m.art);
     }
 
     private fetchAhead(url: string): void {

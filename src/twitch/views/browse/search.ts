@@ -138,8 +138,7 @@ export class SearchView implements Screen {
         this.stack.setNarrow(false);
         this.stack.setShown(!!this.term);
         if (this.term) {
-            // A picture change still waiting when it hid is dropped: the focused tile's now
-            this.showHero(true);
+            this.showHero();
         } else if (!this.keyboard.text) {
             this.showList();
         }
@@ -150,7 +149,6 @@ export class SearchView implements Screen {
         this.shown = false;
         clearTimeout(this.restTimer);
         this.rest.cancel();
-        this.hero.pause();
         setShown(this.el, false);
         this.stack.setShown(false);
     }
@@ -166,7 +164,6 @@ export class SearchView implements Screen {
         clearTimeout(this.suggestTimer);
         this.suggestAsked++;
         this.searchAsked++;
-        this.hero.pause();
         this.stack.clear();
         this.kept.dispose();
     }
@@ -456,11 +453,11 @@ export class SearchView implements Screen {
         this.mark();
     }
 
-    private showHero(atOnce?: boolean): void {
+    private showHero(): void {
         var row = this.stack.row;
         var item = row ? row.focused : null;
         if (item) {
-            this.hero.show(heroOf(item), atOnce);
+            this.hero.show(heroOf(item));
         } else {
             this.hero.hide();
         }

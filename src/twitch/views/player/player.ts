@@ -33,7 +33,8 @@ import { signedIn } from '../../api/gql.js';
 import { avatarAt, stillsOf } from '../../api/pictures.js';
 import { Channel, Clip, Item, LiveUpdate, Recording, Stream, Video } from '../../api/types.js';
 import { Failure } from '../../player/engine.js';
-import { Box, PlayOptions, SessionEvents, Target } from '../../player/session.js';
+import { BreakLeft, Box, PlayOptions, SessionEvents, Target } from '../../player/session.js';
+import { BreakBadge } from './break-badge.js';
 import { PanelLayout } from '../../chat/panel.js';
 import { Watched } from '../../player/watch-time.js';
 import { Confirm } from '../confirm.js';
@@ -60,6 +61,9 @@ import { Track } from './track.js';
 
 /** The overlay hides this long after the last key */
 var IDLE_MS = 5000;
+/** A position chosen with Left/Right is jumped to this long after the last of them (OK jumps at once); longer than the
+ * remote's first repeat (~560 ms), so a held key is one choice */
+var SEEK_SOON_MS = 700;
 /** The overlay hides this long after the screen opens or its gate is passed, so the picture clears soon: with the
  * overlay's .25 s fade (player.css) its shade is gone after 2.625 s, half the time a key keeps it */
 var OPEN_IDLE_MS = 2375;
@@ -85,6 +89,9 @@ var NO_REWIND = 'This channel does not save its broadcasts, so it cannot be rewo
 var NO_RECORDING = 'Twitch does not let this broadcast be rewound. Back to live.';
 /** Twitch's words when a past broadcast plays a stretch it muted */
 var MUTED = 'Audio for portions of this video has been muted as it appears to contain copyrighted content owned or controlled by a third party.';
+/** The picture stands for the line (session.ts): after it had played, and before */
+var LINE_DROPPED = 'The connection dropped: it plays on once it is back.';
+var NO_LINE = 'No internet connection: it starts once it is back.';
 /** Twitch's avatar is 117 px at 1920: asked a size that stays sharp */
 var AVATAR_SIZE = 150;
 
@@ -278,8 +285,9 @@ export class PlayerView implements Screen {
     private resumeAt = 0;
     /** Over: a prompt (ended, failed) shows instead of the picture */
     private over = false;
-    /** The prompt over it is the commercial break's */
+    /** The commercial break's card shows */
     private inBreak = false;
+    private breakBadge = new BreakBadge();
     private chatShown = true;
     /** A live stream's recording as it goes (once the live line said: none, the channel keeps none), and whether that
      * plays now instead of live (rewound) */
@@ -288,8 +296,7 @@ export class PlayerView implements Screen {
      * only NO_ARCHIVE_MS on) */
     private askingArchive = false;
     private noArchiveAt = 0;
-    /** A start at resumeAt is on its way: the video's time is not the new start's yet (the last stream's, or 0) */
-    private landing = false;
+    /** A live player rewound into the broadcast's recording (target is then that past broadcast) */
     private behind = false;
     /** Where chat goes and how it shows (live chat settings), and the classes for how it looks */
     private chatAt: ChatLayout | null = null;
@@ -311,6 +318,9 @@ export class PlayerView implements Screen {
     /** Where focus was before it went to Join (Left from Join goes back there) */
     private beforeJoin = 'follow';
     private hideTimer = 0;
+    /** The jump to a chosen position once the arrows rest, and whether the video was paused before choosing */
+    private seekTimer = 0;
+    private seekFromPaused = false;
     private tickTimer = 0;
     private liveTimer = 0;
     private keepTimer = 0;
@@ -400,7 +410,6 @@ export class PlayerView implements Screen {
                 }
                 self.played = true;
                 self.note();
-                self.landing = false;
                 self.still.moving(true);
                 self.askEmotes();
                 self.setBuffering(false);
@@ -432,11 +441,16 @@ export class PlayerView implements Screen {
             failed: function (f: Failure) {
                 self.failed(f);
             },
+            lineDown: function () {
+                if (self.visible) {
+                    toast(self.played ? LINE_DROPPED : NO_LINE);
+                }
+            },
             background: function () {
                 self.keep();
             },
-            commercial: function (on: boolean) {
-                self.commercial(on);
+            commercial: function (on: boolean, left?: BreakLeft) {
+                self.commercial(on, left);
             }
         };
         this.el = h('div', 'bt-pl bt-pl--' + this.kind);
@@ -512,6 +526,7 @@ export class PlayerView implements Screen {
             this.chatShown = !chatHidden();
             this.applyChat();
         }
+        box.appendChild(this.breakBadge.el);
         this.el.appendChild(this.prompt.el);
         this.el.appendChild(this.confirm.el);
 
@@ -608,15 +623,18 @@ export class PlayerView implements Screen {
         clearInterval(this.keepTimer);
         this.ticking(false);
         clearTimeout(this.hideTimer);
+        clearTimeout(this.seekTimer);
         this.still.moving(false);
     }
 
     destroy(): void {
+        this.breakBadge.hide();
         this.keep();
         clearInterval(this.liveTimer);
         clearInterval(this.keepTimer);
         this.ticking(false);
         clearTimeout(this.hideTimer);
+        clearTimeout(this.seekTimer);
         this.rest.cancel();
         this.still.drop();
         this.follow.destroy();
@@ -665,7 +683,7 @@ export class PlayerView implements Screen {
         // it was) and the overlay hides; hidden, Back leaves
         if (code === KEY.BACK && !this.idle && !this.quality.open) {
             if (this.track.commit() !== null) {
-                this.track.setPosition(this.here());
+                this.track.setPosition(this.deps.session.position());
                 toggleClass(this.el, 'bt-pl--seeking', false);
                 this.resume();
             }
@@ -674,7 +692,7 @@ export class PlayerView implements Screen {
             return true;
         }
         // Bolli's live rewind: Left with the overlay hidden goes back into the broadcast
-        if (code === KEY.LEFT && this.idle && this.kind === 'live' && !this.behind) {
+        if (code === KEY.LEFT && this.idle && this.target.kind === 'live') {
             this.wake();
             this.rewind();
             return true;
@@ -682,7 +700,7 @@ export class PlayerView implements Screen {
         // Up or Down with the overlay hidden only shows it; live, with focus on the track's knob (Left from there
         // rewinds)
         if ((code === KEY.UP || code === KEY.DOWN) && this.idle && !this.quality.open) {
-            if (this.kind === 'live' && !this.behind) {
+            if (this.target.kind === 'live') {
                 this.focus.set('knob');
                 this.drawFocus();
             }
@@ -715,7 +733,7 @@ export class PlayerView implements Screen {
             this.press('chat');
         } else if (code === KEY.OK) {
             this.press(this.focus.current);
-        } else if ((code === KEY.LEFT || code === KEY.RIGHT) && this.focus.current === 'knob' && this.kind === 'live' && !this.behind) {
+        } else if ((code === KEY.LEFT || code === KEY.RIGHT) && this.focus.current === 'knob' && this.target.kind === 'live') {
             // At live: Left goes back into the broadcast, Right has nowhere to go
             if (code === KEY.LEFT) {
                 this.rewind();
@@ -793,9 +811,8 @@ export class PlayerView implements Screen {
             // its gate is passed
             this.gateKnown = true;
         }
-        if ((this.kind === 'vod' || this.behind) && !s.owns(this.events) && !s.plays(target)) {
+        if (this.target.kind === 'vod' && !s.owns(this.events) && !s.plays(target)) {
             target.startAt = this.resumeAt;
-            this.landing = true;
         }
         s.play(target, this.events, {});
     }
@@ -910,7 +927,7 @@ export class PlayerView implements Screen {
 
     /** A past broadcast's chat follows its video while that plays here with the chat in sight */
     private replayRuns(): void {
-        if (this.chat && (this.kind === 'vod' || this.behind)) {
+        if (this.chat && this.target.kind === 'vod') {
             this.chat.running(this.visible && this.chatShown && this.chatJoined && !this.paused && !this.buffering && !this.over);
         }
     }
@@ -925,6 +942,7 @@ export class PlayerView implements Screen {
     }
 
     private resume(): void {
+        clearTimeout(this.seekTimer);
         var at = this.track.commit();
         if (at !== null && this.behind && at >= this.track.length() - LIVE_EDGE_S) {
             toggleClass(this.el, 'bt-pl--seeking', false);
@@ -932,10 +950,6 @@ export class PlayerView implements Screen {
             return;
         }
         if (at !== null) {
-            // (a seek before the start landed: the start moves there)
-            if (this.landing) {
-                this.resumeAt = at;
-            }
             this.deps.session.seek(at);
             toggleClass(this.el, 'bt-pl--seeking', false);
         }
@@ -961,15 +975,37 @@ export class PlayerView implements Screen {
         return true;
     }
 
-    /** Left or Right on the knob: the playback pauses and the pending position moves */
+    /** Left or Right on the knob: the playback pauses and the pending position moves, jumped to once the arrows rest */
     private seekStep(dir: number): void {
         var track = this.track;
         if (track.pending === null) {
+            this.seekFromPaused = this.paused;
             this.pause();
             // Twitch shows no play sign while a position is chosen
             toggleClass(this.el, 'bt-pl--seeking', true);
         }
-        track.step(dir, this.here(), Date.now());
+        track.step(dir, this.deps.session.position(), Date.now());
+        clearTimeout(this.seekTimer);
+        var self = this;
+        this.seekTimer = setTimeout(function () {
+            self.seekRested();
+        }, SEEK_SOON_MS) as unknown as number;
+    }
+
+    /** The arrows rested: the chosen position is jumped to, playing on as before choosing (paused stays paused, unless
+     * it reaches live) */
+    private seekRested(): void {
+        var at = this.track.pending;
+        if (at === null) {
+            return;
+        }
+        if (!this.seekFromPaused || (this.behind && at >= this.track.length() - LIVE_EDGE_S)) {
+            this.resume();
+            return;
+        }
+        this.track.commit();
+        this.deps.session.seek(at);
+        toggleClass(this.el, 'bt-pl--seeking', false);
     }
 
     // The overlay
@@ -1030,7 +1066,7 @@ export class PlayerView implements Screen {
         if (this.kind === 'live') {
             setText(this.metaSecond, uptime(this.startedAt, Date.now()));
         }
-        if (this.kind === 'live' && !this.behind) {
+        if (this.target.kind === 'live') {
             // Live: the uptime, the knob at its end
             var up = (Date.now() - Date.parse(this.startedAt)) / 1000;
             if (up > 0) {
@@ -1040,13 +1076,8 @@ export class PlayerView implements Screen {
         } else {
             var s = this.deps.session;
             this.track.setDuration(s.duration());
-            this.track.setPosition(this.started() ? this.here() : this.resumeAt);
+            this.track.setPosition(this.started() ? this.deps.session.position() : this.resumeAt);
         }
-    }
-
-    /** Where the video is; while a start is on its way, where it starts */
-    private here(): number {
-        return this.landing ? this.resumeAt : this.deps.session.position();
     }
 
     /** The session plays this screen's target */
@@ -1059,7 +1090,7 @@ export class PlayerView implements Screen {
      * known: where in the recording the picture is, kept as that past broadcast's position (its tiles show it, and
      * Watch History offers it once the stream ended), and the recording noted with the channel */
     private keep(): void {
-        if (this.behind && this.started() && !this.landing) {
+        if (this.behind && this.started()) {
             this.resumeAt = this.deps.session.position();
         }
         if (this.kind === 'live' && this.played) {
@@ -1083,7 +1114,7 @@ export class PlayerView implements Screen {
             return;
         }
         var s = this.deps.session;
-        var at = this.track.pending !== null ? this.track.pending : this.here();
+        var at = this.track.pending !== null ? this.track.pending : s.position();
         if (at > 0) {
             keepPosition(this.target.id, at, s.duration());
             this.resumeAt = at;
@@ -1175,7 +1206,7 @@ export class PlayerView implements Screen {
         } else if (id === 'knob') {
             if (this.paused || this.track.pending !== null) {
                 this.resume();
-            } else if (this.kind !== 'live' || this.behind) {
+            } else if (this.target.kind !== 'live') {
                 // (at live OK does nothing: paused, the picture would fall behind under a knob that says live)
                 this.pause();
             }
@@ -1205,7 +1236,7 @@ export class PlayerView implements Screen {
     private joinChat(): void {
         if (this.chat && !this.chatJoined) {
             this.chatJoined = true;
-            this.chat.open(this.channel.login, this.kind === 'vod' || this.behind ? this.target.id : undefined, this.behind);
+            this.chat.open(this.channel.login, this.target.kind === 'vod' ? this.target.id : undefined, this.behind);
             this.askEmotes();
             this.replayRuns();
         }
@@ -1462,7 +1493,6 @@ export class PlayerView implements Screen {
         var track = this.track;
         track.setDuration(recorded);
         track.setPosition(at);
-        this.landing = true;
         this.reachLinks('knob');
         if (this.chat && this.chatJoined) {
             this.chat.open(this.channel.login, archive.id, true);
@@ -1473,8 +1503,8 @@ export class PlayerView implements Screen {
     /** Live again: the live stream, its chat and live's controls */
     private goLive(): void {
         this.behind = false;
-        this.landing = false;
         // (a position being chosen when the recording failed or ended: dropped, the knob follows live again)
+        clearTimeout(this.seekTimer);
         this.track.commit();
         toggleClass(this.el, 'bt-pl--seeking', false);
         this.target = { kind: 'live', id: this.channel.login };
@@ -1569,7 +1599,7 @@ export class PlayerView implements Screen {
 
     /** A prompt over the picture, the quality menu closed (what plays is the caller's to stop) */
     private showOver(model: PromptModel): void {
-        this.inBreak = false;
+        this.commercial(false);
         this.over = true;
         this.still.drop();
         this.quality.close();
@@ -1585,20 +1615,15 @@ export class PlayerView implements Screen {
         toggleClass(this.el, 'bt-pl--over', false);
     }
 
-    /** Every player type has the channel's commercial break (a Bolli screen: Twitch's app plays the commercial), or it
-     * ended: the screen goes when the stream is back */
-    private commercial(on: boolean): void {
-        var self = this;
+    /** Every player type has the channel's commercial break (a Bolli card over the stream's last picture: Twitch's app
+     * plays the commercial), told anew with what is left of it; or it ended: the card goes (not under a prompt) */
+    private commercial(on: boolean, left?: BreakLeft): void {
         if (on && !this.over) {
-            this.showOver({
-                picture: 'monitor', title: 'Commercial Break',
-                lines: [{ text: this.channel.displayName + ' is taking a commercial break. The stream comes back right after it.' }],
-                buttons: [{ label: 'Go Back', act: function () { self.deps.nav.back(); } }]
-            });
+            this.breakBadge.show(left);
             this.inBreak = true;
         } else if (!on && this.inBreak) {
+            this.breakBadge.hide();
             this.inBreak = false;
-            this.clearOver();
         }
     }
 

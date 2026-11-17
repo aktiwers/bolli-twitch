@@ -83,8 +83,9 @@ export function notFound(): GqlError {
 
 /** One query; its data, or a GqlError. A field that only an account may see comes back null with an
  * "unauthenticated" error beside the data: that is a reply, not a failure. No data at all, or a root field that
- * is null with an error on it, is a failure. asGuest: asked without the account even when signed in */
-export function gql<T>(query: string, variables?: { [name: string]: unknown }, asGuest?: boolean): Promise<T> {
+ * is null with an error on it, is a failure. asGuest: asked without the account even when signed in; partial: a
+ * root field that failed is only null (one of several asked at once) */
+export function gql<T>(query: string, variables?: { [name: string]: unknown }, asGuest?: boolean, partial?: boolean): Promise<T> {
     var headers: { [name: string]: string } = { 'Client-ID': CLIENT_ID, 'Device-Id': device(), 'Content-Type': 'text/plain;charset=UTF-8' };
     var sentWith = asGuest ? '' : authToken;
     if (sentWith) {
@@ -98,7 +99,7 @@ export function gql<T>(query: string, variables?: { [name: string]: unknown }, a
         var errors = (reply && reply.errors) || [];
         var data = reply && reply.data;
         var failed = !data;
-        for (var i = 0; data && !failed && i < errors.length; i++) {
+        for (var i = 0; data && !failed && !partial && i < errors.length; i++) {
             var root = errors[i].path ? errors[i].path![0] : undefined;
             failed = root !== undefined && data[root] === null;
         }

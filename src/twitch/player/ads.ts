@@ -52,3 +52,54 @@ export function markAdGaps(text: string): { text: string; ads: boolean } {
     }
     return { text: copied ? out + text.slice(copied) : text, ads: found };
 }
+
+/** Seconds of the commercial break in a live media playlist still to come after its newest segment, and which ad of
+ * how many plays there; null: no break told. Twitch tells each ad in a stitched date range: its start, its length,
+ * its place in the break and the break's ads and length; the newest one tells the rest (the ads after it as long as
+ * the break's length shares out per ad) */
+export function breakLeft(text: string): { seconds: number; ad: number; ads: number } | null {
+    var last: string | null = null;
+    var lastStart = 0;
+    for (var at = text.indexOf('CLASS="twitch-stitched-ad"'); at >= 0; at = text.indexOf('CLASS="twitch-stitched-ad"', at + 1)) {
+        var lineStart = text.lastIndexOf('\n', at) + 1;
+        var lineEnd = text.indexOf('\n', at);
+        var line = text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd);
+        var start = Date.parse(field(line, 'START-DATE'));
+        if (start >= lastStart) {
+            last = line;
+            lastStart = start;
+        }
+    }
+    var edge = newestEnd(text);
+    if (!last || !(edge > 0)) {
+        return null;
+    }
+    var duration = parseFloat(field(last, 'DURATION')) || 0;
+    var ads = parseInt(field(last, 'X-TV-TWITCH-AD-POD-LENGTH'), 10) || 1;
+    var ad = (parseInt(field(last, 'X-TV-TWITCH-AD-POD-POSITION'), 10) || 0) + 1;
+    var filled = parseFloat(field(last, 'X-TV-TWITCH-AD-POD-FILLED-DURATION')) || duration * ads;
+    var end = lastStart + (duration + (ads - ad) * filled / ads) * 1000;
+    return { seconds: Math.max(0, (end - edge) / 1000), ad: ad, ads: ads };
+}
+
+/** An attribute's value in a tag line (quoted or not; '' when missing) */
+function field(line: string, name: string): string {
+    var m = new RegExp('[:,]' + name + '=("([^"]*)"|[^,]*)').exec(line);
+    return m ? (m[2] !== undefined ? m[2] : m[1]) : '';
+}
+
+/** When the playlist's newest segment ends, as its date tags tell (ms; 0: not told) */
+function newestEnd(text: string): number {
+    var at = text.lastIndexOf('#EXT-X-PROGRAM-DATE-TIME:');
+    if (at < 0) {
+        return 0;
+    }
+    var lineEnd = text.indexOf('\n', at);
+    var t = Date.parse(text.slice(at + 25, lineEnd < 0 ? text.length : lineEnd).trim());
+    var re = /#EXTINF:([\d.]+)/g;
+    re.lastIndex = at;
+    for (var m = re.exec(text); m; m = re.exec(text)) {
+        t += parseFloat(m[1]) * 1000;
+    }
+    return t;
+}

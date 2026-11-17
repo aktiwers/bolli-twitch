@@ -21,7 +21,7 @@
 //   (quickHere: webOS TV 3 and later, the Android app), and tells this TV a short length, so its picture comes at
 //   once (TOLD_S, shortHere: webOS only).
 
-import { aheadOf, Delay, Engine, EngineEvents, Failure, Fetched, hideVideo, playVideo, Source } from './engine.js';
+import { aheadOf, Delay, dry, Engine, EngineEvents, Failure, Fetched, hideVideo, playVideo, Source } from './engine.js';
 import { HlsDetails as Details, HlsInstance, HlsStatic, loadHls, whenWorkerFails, workerFailed, workerPath, workerRuns } from './hls-loader.js';
 import { dropPipeline, fits, keepPipeline, releasePipeline, takePipeline, Transfer } from './pipeline.js';
 import { bandwidth, noteBandwidth, SHARE, startQuality } from './bandwidth.js';
@@ -74,6 +74,24 @@ var TS_SYNC = 0x47;
 /** The moof of the fragment an fMP4 landing's rest becomes is this long (padded: 600 pictures' and their sound's
  * samples take a third of it), so its first bytes are known before the rest is in */
 var REST_MOOF_BYTES = 32768;
+/** A request for the stream that gets no answer (no status, or a timeout) is asked again up to NET_RETRIES times, 1,
+ * 2, 4, 8 and 10 s apart, instead of hls.js's 2 (playlists): a line down a few seconds failed the playback. That
+ * bridges the session's probe (it stops the loading once the line is found down, and starts it again on its return);
+ * a server that fails while the line answers still ends in a failure within half a minute (the session resolves the
+ * stream again). hls.js itself asks no request again that got no status (unless the browser says offline); a refusal
+ * (a status) it asks again by its own rule */
+var NET_RETRIES = 5;
+var NET_RETRY = {
+    maxNumRetry: NET_RETRIES, retryDelayMs: 1000, maxRetryDelayMs: 10000,
+    shouldRetry: function (config: { maxNumRetry: number }, count: number, timeout: boolean, response: { code?: number } | undefined, retry: boolean): boolean {
+        return retry || (count < config.maxNumRetry && !(response && response.code));
+    }
+};
+/** Back from a drop, a live stream moves this far on: the TV takes a seek to where the video stands as none, and
+ * plays on at about 1.6 times speed until it is back where its clock ran on to (picture and sound out of step) */
+var RESYNC_S = 0.05;
+/** hls.js's network errors that ask again: a load of a segment or a media playlist that failed or timed out */
+var ASKED_AGAIN: { [details: string]: boolean } = { fragLoadError: true, fragLoadTimeOut: true, levelLoadError: true, levelLoadTimeOut: true };
 /** The field of hls.js's config the playlist loader reads the session's playlists from (not enumerable: hls.js posts
  * its config to the worker) */
 var PLAYLISTS = 'bolliPlaylists';
@@ -604,6 +622,12 @@ export class MseEngine implements Engine {
     private measured = false;
     private pausedOn = false;
     private loadStopped = false;
+    /** The line is down: nothing is loaded until it is back (wait) */
+    private lineWaits = false;
+    /** Back from a drop on a live stream: the first segment in moves the video to where it stands (overHole), and the
+     * first playlist in to the live point (toLive) */
+    private resyncing = false;
+    private toLive = false;
     private onPlaying: (() => void) | null = null;
     private onLoadStart: (() => void) | null = null;
     private onTime: (() => void) | null = null;
@@ -664,6 +688,9 @@ export class MseEngine implements Engine {
         this.measured = false;
         this.pausedOn = !!paused;
         this.loadStopped = false;
+        this.lineWaits = false;
+        this.resyncing = false;
+        this.toLive = false;
         // (until open() knows the pipeline: a kept one may still hold the last video)
         this.taken = true;
         this.ready = false;
@@ -737,6 +764,8 @@ export class MseEngine implements Engine {
             enableDateRangeMetadataCues: false,
             enableEmsgMetadataCues: false,
             enableID3MetadataCues: false,
+            fragLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 120000, timeoutRetry: NET_RETRY, errorRetry: NET_RETRY } },
+            playlistLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: NET_RETRY, errorRetry: NET_RETRY } },
             pLoader: PlaylistLoader || (PlaylistLoader = wrapLoader(Hls, loadPlaylist)),
             fLoader: FragmentLoader || (FragmentLoader = wrapLoader(Hls, loadFragment))
         });
@@ -781,6 +810,7 @@ export class MseEngine implements Engine {
             if (self.hls === hls) {
                 self.details = data.details;
                 self.level = data.level;
+                self.backToLive(hls);
             }
         });
         hls.on(E.BUFFER_CREATED, function (event, data) {
@@ -819,6 +849,7 @@ export class MseEngine implements Engine {
         hls.on(E.FRAG_BUFFERED, function (event, data) {
             if (self.hls === hls && data.frag && data.frag.type === 'main') {
                 self.buffered(hls, source);
+                self.overHole(true);
                 // (a short length told has set it, and its lift raises it to the stream's)
                 if (pipe && !fitted) {
                     fitted = true;
@@ -1159,7 +1190,7 @@ export class MseEngine implements Engine {
         }
     }
 
-    private error(data: { fatal: boolean; type: string; details: string; event?: string }): void {
+    private error(data: { fatal: boolean; type: string; details: string; event?: string; response?: { code?: number } }): void {
         if (data.event === 'demuxerWorker') {
             // This build converts segments in the worker only: one that never ran plays nothing here (the session
             // moves a past broadcast on to the TV's own player; live fails); one that ran threw on a segment, which a
@@ -1170,7 +1201,11 @@ export class MseEngine implements Engine {
         }
         if (!data.fatal) {
             if (data.details === 'bufferStalledError' && this.events) {
+                this.overHole(false);
                 this.events.stalled('');
+            } else if (data.type === 'networkError' && ASKED_AGAIN[data.details] && !(data.response && data.response.code) &&
+                this.events && this.events.lost) {
+                this.events.lost();
             }
             return;
         }
@@ -1238,15 +1273,104 @@ export class MseEngine implements Engine {
         }
         if (on) {
             this.stopWhenFull(hls);
-        } else if (this.loadStopped && !this.jump) {
-            // (a jump on its way starts the loading itself, where it lands; a windowed past broadcast's playlist grows,
-            // so hls.js would start one without a position known yet at its end, as live)
-            this.loadStopped = false;
-            if (this.whole() && this.ready) {
-                hls.startLoad(this.video.currentTime);
-            } else {
-                hls.startLoad();
+        } else if (this.loadStopped && !this.jump && !this.lineWaits) {
+            this.loadAgain(hls);
+        }
+    }
+
+    /** The loading goes on where the video stands. (A windowed past broadcast's playlist grows, so hls.js would start
+     * one without a position known yet at its end, as live) */
+    private loadAgain(hls: HlsInstance): void {
+        this.loadStopped = false;
+        if (this.whole() && this.ready) {
+            hls.startLoad(this.video.currentTime);
+        } else {
+            hls.startLoad();
+        }
+    }
+
+    /** The line is down: hls.js's loading stops (its requests would hang, and the browser's connections to the
+     * stream's servers with them). Back: it goes on at once from where the video stands, not while paused (resuming
+     * starts it) or while a jump on its way does. Each time with a seek, as a jump: a picture that stood long and is
+     * fed on without one has the TV run its picture fast after the sound, out of step for seconds and the sound
+     * crackling. A past broadcast jumps to where it stands (seek: its segment asked as a landing's); a live stream
+     * jumps to the live point once its first playlist is in (backToLive) */
+    wait(on: boolean): void {
+        var hls = this.hls;
+        if (!hls || on === this.lineWaits) {
+            return;
+        }
+        this.lineWaits = on;
+        if (on) {
+            hls.stopLoad();
+            this.loadStopped = true;
+            this.resyncing = this.toLive = false;
+            // (a jump on its way starts the loading where it lands)
+            if (this.jump) {
+                this.jump.stopped = true;
             }
+            return;
+        }
+        // (paused: resuming loads; a jump on its way, or one made meanwhile, loads where it lands)
+        if (this.pausedOn || this.jump || !this.loadStopped) {
+            return;
+        }
+        var video = this.video;
+        if (!this.ready || !dry(video)) {
+            // Still playing: on without a seek
+            this.loadAgain(hls);
+        } else if (this.source && this.source.kind === 'live') {
+            this.loadAgain(hls);
+            this.resyncing = this.toLive = true;
+        } else {
+            // (a jump that stops the loading starts it where it lands)
+            this.seek(video.currentTime);
+            var jump = this.jump as Jump | null;
+            if (!jump || !jump.stopped) {
+                this.loadAgain(hls);
+            }
+        }
+    }
+
+    /** Back from a drop on a live stream, its first playlist in: the video jumps to the live point, in step with the
+     * broadcast again (a viewer of a live stream wants what happens now; what the drop missed is skipped). A seek to
+     * another place, so the TV starts its clock anew (overHole's resync is then not needed) */
+    private backToLive(hls: HlsInstance): void {
+        if (!this.toLive) {
+            return;
+        }
+        this.toLive = false;
+        var video = this.video;
+        var to = hls.liveSyncPosition;
+        if (to !== null && to > video.currentTime + RESYNC_S) {
+            this.resyncing = false;
+            video.currentTime = to;
+        }
+    }
+
+    /** A live stream whose playhead is no longer in its playlist (the line was down longer than the playlist reaches
+     * back) and that hls.js loaded again at its newest segments: the video moves there once what it stands on has
+     * run out (hls.js skips no hole over segments it never loaded, so it would stand for good). Back from a drop
+     * (resyncing), the first segment in (segmentIn) moves it either there or to where it stands */
+    private overHole(segmentIn: boolean): void {
+        var video = this.video;
+        var at = video.currentTime;
+        var frags = this.details ? this.details.fragments : [];
+        var resync = segmentIn && this.resyncing;
+        if (segmentIn) {
+            this.resyncing = false;
+        }
+        if (this.source && this.source.kind === 'live' && frags.length && !video.seeking && at < frags[0].start && dry(video)) {
+            var b = video.buffered;
+            for (var i = 0; i < b.length; i++) {
+                if (b.start(i) > at) {
+                    video.currentTime = b.start(i);
+                    return;
+                }
+            }
+        }
+        if (resync && !video.seeking) {
+            video.currentTime = at + RESYNC_S;
         }
     }
 

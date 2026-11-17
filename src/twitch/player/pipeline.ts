@@ -1,7 +1,10 @@
 // The Media Source pipeline (a MediaSource on the app's video with its video and audio buffers), kept from one video
 // to the next: tearing one down and building the next blocks the TV's slow CPU. A stopping Media Source engine leaves
 // it here, paused and emptied; the next one takes it over (hls.js's transferMedia). Another use of the video (the TV's
-// own player, a clip), leaving the player or the app going to the background lets it go.
+// own player, a clip), leaving the player or the app going to the background lets it go, and so does browsing for
+// IDLE_MS without a video: while a MediaSource exists the TV's runtime forces two full garbage collections every few
+// seconds (on the TV 14 in 30 s, ~660 ms of pauses, against 6-7 and ~200 ms without one), while a fresh pipeline
+// costs the next start ~0.1 s and one ~180 ms pause.
 
 import { unloadVideo } from '../../player/video.js';
 
@@ -14,12 +17,15 @@ export interface Transfer {
 
 /** Fallback wait for a buffer that removes data without telling (removed from its source mid-update) */
 var SETTLED_POLL_MS = 250;
+/** A pipeline kept this long without a video starting is let go (a quick hop back to a video keeps it) */
+var IDLE_MS = 30000;
 
 var kept: Transfer | null = null;
 /** The video's source address while it shows the kept pipeline (an object URL of its MediaSource) */
 var url = '';
 var emptied: Promise<void> = Promise.resolve();
 var watching = false;
+var idleTimer = 0;
 
 /** For inspection (the test hook's state): pipelines kept, taken over and let go */
 export var pipelineStats = { kept: 0, taken: 0, released: 0 };
@@ -112,6 +118,12 @@ export function keepPipeline(video: HTMLVideoElement, t: Transfer | null): void 
     kept = t;
     url = video.getAttribute('src') || '';
     pipelineStats.kept++;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () {
+        if (kept === t) {
+            releasePipeline(video);
+        }
+    }, IDLE_MS) as unknown as number;
     emptied = Promise.all(buffersOf(t).map(function (sb) { return empty(t.mediaSource, sb); })).then(function () {
         return undefined;
     }, function () {
@@ -143,6 +155,7 @@ export function takePipeline(): Promise<Transfer | null> {
         }
         kept = null;
         url = '';
+        clearTimeout(idleTimer);
         pipelineStats.taken++;
         return t;
     });
@@ -161,6 +174,7 @@ export function dropPipeline(t: Transfer): void {
 export function releasePipeline(video: HTMLVideoElement, replaced?: boolean): void {
     var t = kept;
     kept = null;
+    clearTimeout(idleTimer);
     emptied = Promise.resolve();
     if (t) {
         pipelineStats.released++;

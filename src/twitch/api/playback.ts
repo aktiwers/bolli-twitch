@@ -145,6 +145,56 @@ export function masterUrl(kind: StreamKind, id: string, t: Token): string {
         query(t.usher === 'v2' ? webPairs(kind, t, k.page + name) : tvPairs(kind, t));
 }
 
+/** A way of asking a live stream: player type, platform ('' this device's) and usher version */
+export interface Way {
+    type: string;
+    platform: string;
+    usher: UsherVersion;
+}
+
+/** Player types beyond PLAYER_TYPES: Twitch's other players (site and pulsar last: they carry its breaks) */
+var MORE_TYPES = ['autoplay', 'picture-by-picture', 'thunderdome', 'channel_home_live', 'dashboard', 'site', 'pulsar'];
+
+/** Every way a commercial break may be left behind by: each player type as each platform through v1, and through
+ * v2 as the website asks; the session's own ways first */
+export var WAYS: Way[] = [];
+PLAYER_TYPES.concat(MORE_TYPES).forEach(function (type) {
+    ['', 'web', 'android', 'ios'].forEach(function (p) {
+        WAYS.push({ type: type, platform: p, usher: 'v1' });
+    });
+    WAYS.push({ type: type, platform: 'web', usher: 'v2' });
+});
+
+/** Aliases Twitch takes in one query */
+var ALIASES = 15;
+
+/** Live tokens for ways, ALIASES to a query (one alias each), the queries at once; null for a way Twitch gave none */
+export function wayTokens(login: string, ways: Way[], withAccount?: boolean): Promise<(Token | null)[]> {
+    var asked: Promise<(Token | null)[]>[] = [];
+    for (var i = 0; i < ways.length; i += ALIASES) {
+        asked.push(someTokens(login, ways.slice(i, i + ALIASES), withAccount));
+    }
+    return Promise.all(asked).then(function (parts) {
+        return ([] as (Token | null)[]).concat.apply([], parts);
+    });
+}
+
+function someTokens(login: string, ways: Way[], withAccount?: boolean): Promise<(Token | null)[]> {
+    var k = KINDS.live;
+    var fields = ways.map(function (w, i) {
+        var params = w.usher === 'v1' ? '{platform: "' + (w.platform || platform()) + '", playerType: "' + w.type + '"}' :
+            '{platform: "web", playerBackend: "mediaplayer", playerType: "' + w.type + '"}';
+        return 't' + i + ': ' + k.field + '(' + k.arg + ': $id, params: ' + params + ') { value signature }';
+    });
+    return gql<{ [alias: string]: TokenReply | null }>('query($id: String!) { ' + fields.join(' ') + ' }', { id: login }, !withAccount, true)
+        .then(function (data) {
+            return ways.map(function (w, i) {
+                var r = data['t' + i];
+                return r && r.value ? { value: r.value, signature: r.signature, playerType: w.type, usher: w.usher } : null;
+            });
+        });
+}
+
 /** A token as playerType for usher version, and the master playlist's address it opens */
 export function playbackUrl(kind: StreamKind, id: string, playerType: string, version: UsherVersion, withAccount?: boolean): Promise<{ url: string; token: Token }> {
     return playbackToken(kind, id, playerType, version, withAccount).then(function (t) {

@@ -129,6 +129,15 @@
 .bt-pl-prompt-buttons .bt-button + .bt-button { margin-left: 6px; }
 .bt-pl--gate .bt-pl-prompt-buttons .bt-button + .bt-button { margin-left: 0; }
 
+/* A commercial break every player type has: a card at the picture's top right over its last picture, counting down */
+.bt-pl-break { position: absolute; right: 24px; top: 24px; z-index: 3; width: 240px; box-sizing: border-box; padding: 14px 16px 16px;
+               border-radius: 7.2px; background: rgba(14, 14, 16, .86); color: #efeff1; }
+.bt-pl-break-title { font-size: 16.8px; font-weight: 600; line-height: 20px; }
+.bt-pl-break-line { margin-top: 4px; font-size: 15.6px; line-height: 19.33px; color: #adadb8; }
+.bt-pl-break-bar { margin-top: 12px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .16); overflow: hidden; }
+.bt-pl-break-fill { height: 100%; background: #a970ff; -webkit-transform-origin: 0 0; transform-origin: 0 0;
+                    -webkit-transform: scaleX(0); transform: scaleX(0); }
+
 /* The options page: the rows under the top menu's Go Back */
 .bt-opt { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; background: #0e0e10; }
 .bt-opt-rows { position: absolute; left: 48px; top: 174px; width: 1184px; }

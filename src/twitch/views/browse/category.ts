@@ -82,9 +82,8 @@ export class CategoryPage implements Screen {
                 }
                 throw e;
             });
-        }, 'bt-state--category', { title: '', line: 'It doesn\'t look like there is any content for this category.' }, function (first: boolean) {
-            // The first channels may come right after the header's hero (asked ahead): not a held key
-            self.showHero(first);
+        }, 'bt-state--category', { title: '', line: 'It doesn\'t look like there is any content for this category.' }, function () {
+            self.showHero();
             self.mark();
         });
         this.el.appendChild(this.paged.grid.el);
@@ -111,8 +110,7 @@ export class CategoryPage implements Screen {
         setShown(this.el, true);
         this.grid.setNarrow(false);
         this.grid.hold(false);
-        // A picture change still waiting when it hid is dropped: the focused tile's now
-        this.showHero(true);
+        this.showHero();
     }
 
     /** Under a player: pictures for the focused row only */
@@ -123,7 +121,6 @@ export class CategoryPage implements Screen {
     hide(): void {
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
-        this.hero.pause();
         setShown(this.el, false);
         this.grid.hold(true);
     }
@@ -131,7 +128,6 @@ export class CategoryPage implements Screen {
     destroy(): void {
         clearTimeout(this.aheadTimer);
         this.rest.cancel();
-        this.hero.pause();
         this.follow.destroy();
         this.paged.destroy();
     }
@@ -230,8 +226,8 @@ export class CategoryPage implements Screen {
         this.follow.set({ kind: 'game', id: game.id, name: game.displayName });
     }
 
-    private showHero(atOnce?: boolean): void {
-        this.hero.show(this.heroFor(this.grid.focusedItem), atOnce);
+    private showHero(): void {
+        this.hero.show(this.heroFor(this.grid.focusedItem));
     }
 
     /** Once focus rests: the top pictures one step away */

@@ -87,19 +87,29 @@ export function segmentStart(text: string, at: number): number {
     return segment ? segment.start : at;
 }
 
+var MUTED = '-muted.';
+
 /** The stretches of a past broadcast Twitch muted for copyrighted audio (its segments' addresses end in -muted), as
  * [start, end] seconds on the playlist's timeline, neighbours joined */
 export function mutedRanges(text: string): number[][] {
     var out: number[][] = [];
-    // (most have none: no walk over every segment's address then, which held the TV's page 15 ms for 3 h)
-    if (text.indexOf('-muted.') < 0) {
+    // (most have none: no walk over the segments then)
+    var mute = text.indexOf(MUTED);
+    if (mute < 0) {
         return out;
     }
+    // Only the durations are walked, each muted address found by indexOf and given to the segment it follows: taking
+    // every segment's address held the TV's page 90 ms in 47 h (17,000 segments), this half of it
     var re = /#EXTINF:([\d.]+)/g;
     var start = 0;
-    for (var m = re.exec(text); m; m = re.exec(text)) {
+    var m = re.exec(text);
+    while (m) {
+        var next = re.exec(text);
         var end = start + parseFloat(m[1]);
-        if (/-muted\./.test(addressAfter(text, m.index))) {
+        while (mute >= 0 && mute < m.index) {
+            mute = text.indexOf(MUTED, mute + 1);
+        }
+        if (mute >= 0 && mute < (next ? next.index : text.length)) {
             var last = out[out.length - 1];
             if (last && last[1] === start) {
                 last[1] = end;
@@ -108,6 +118,7 @@ export function mutedRanges(text: string): number[][] {
             }
         }
         start = end;
+        m = next;
     }
     return out;
 }

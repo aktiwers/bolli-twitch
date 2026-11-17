@@ -124,9 +124,10 @@ var HISTORY: Setting = {
     set: function (v) { setHistoryMode(v as HistoryMode); },
     label: function (v) { return v === 'favorites' ? 'In Favorites' : v === 'page' ? 'Own Page' : 'Off'; },
     line: function (v) {
-        return v === 'favorites' ? 'What you watched, newest first, in a Continue Watching row at the top of Favorites.' :
-            v === 'page' ? 'What you watched, newest first, on a History page in the menu, after Home.' :
-            'History is not shown, but still kept: it is all there when you show it again.';
+        // (the list is in the device's own storage, nowhere else)
+        return v === 'favorites' ? 'What you watched, in a Continue Watching row at the top of Favorites. Kept only on this TV.' :
+            v === 'page' ? 'What you watched, on a History page in the menu, after Home. Kept only on this TV.' :
+            'Not shown, but still kept on this TV: it is all there when you show it again.';
     }
 };
 
