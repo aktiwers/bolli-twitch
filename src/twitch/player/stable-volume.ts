@@ -1,6 +1,9 @@
-// Stable Volume (Settings, Android only): Twitch streams come as loud as each streamer sends them, mostly quieter and
-// less even than levelled broadcast sound. With it on, the video's sound goes through Web Audio: a compressor that
-// lifts quiet passages and holds back loud ones, a gain that brings the whole up, and a limiter against clipping.
+// Stable Volume (Settings, Android only, off unless switched on): Twitch streams come as loud as each streamer sends
+// them, mostly quieter and less even than levelled broadcast sound. With it on, the video's sound goes through Web
+// Audio: a compressor that lifts quiet passages and holds back loud ones, a gain that brings the whole up, a limiter,
+// and a trim under full scale. Off by default since 0.1.13: a viewer on a Chromecast with Google TV heard the sound
+// crackle with it on (Web Audio's processing on that device's CPU), and off, Web Audio is never made, so nothing of it
+// runs.
 // Android only: the LG TV plays video sound in its own hardware (Web Audio hears silence there), and its own Auto
 // Volume does the same job. The video is wired only once the setting is on (Web Audio takes its sound for good), and
 // a context the system started suspended is resumed when the video plays or a key is pressed.
@@ -17,8 +20,12 @@ var ATTACK_S = 0.02;
 var RELEASE_S = 0.4;
 /** The whole brought up after it (dB) */
 var GAIN_DB = 4;
-/** The limiter: nothing past LIMIT_DB */
+/** The limiter: nothing much past LIMIT_DB */
 var LIMIT_DB = -3;
+/** After the limiter (dB): Chrome's compressors add their own makeup gain and the limiter is no brick wall, so loud
+ * attacks came out over full scale (up to +1.1 dBFS, clipped at the output: a click); with this, at most -1.9 dBFS
+ * (rendered offline in Chrome: tones, noise bursts and quiet-to-loud steps up to 0 dBFS in) */
+var TRIM_DB = -3;
 
 interface Graph {
     ctx: AudioContext;
@@ -43,10 +50,10 @@ export function canStabilize(): boolean {
     return !!android() && !!contextClass();
 }
 
-/** The setting: on unless switched off */
+/** The setting: off unless switched on */
 export function stableVolume(): boolean {
     if (on === null) {
-        on = load<boolean>(STORE_KEY) !== false;
+        on = load<boolean>(STORE_KEY) === true;
     }
     return on;
 }
@@ -97,9 +104,12 @@ function build(v: HTMLVideoElement): Graph {
     limiter.ratio.value = 20;
     limiter.attack.value = 0.001;
     limiter.release.value = 0.1;
+    var trim = ctx.createGain();
+    trim.gain.value = Math.pow(10, TRIM_DB / 20);
     compressor.connect(gain);
     gain.connect(limiter);
-    limiter.connect(ctx.destination);
+    limiter.connect(trim);
+    trim.connect(ctx.destination);
     var resume = function (): void {
         var c = ctx as AudioContext & { state?: string; resume?: () => Promise<void> };
         if (c.state === 'suspended' && c.resume) {
@@ -109,5 +119,5 @@ function build(v: HTMLVideoElement): Graph {
     v.addEventListener('playing', resume);
     document.addEventListener('keydown', resume, true);
     resume();
-    return { ctx: ctx, source: source, chain: compressor, out: limiter };
+    return { ctx: ctx, source: source, chain: compressor, out: trim };
 }

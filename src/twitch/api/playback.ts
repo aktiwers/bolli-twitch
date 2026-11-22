@@ -115,17 +115,22 @@ function query(pairs: string[][]): string {
     return pairs.map(function (p) { return encodeURIComponent(p[0]) + '=' + encodeURIComponent(p[1]); }).join('&');
 }
 
-/** Twitch's TV app's parameters (v1). The TV decodes H.264 only (Twitch's TV app also offers AV1) */
-function tvPairs(kind: StreamKind, t: Token): string[][] {
+/** The codecs usher is told: H.264, and HEVC with high (Twitch's 1440p, player/high.ts: listed only with it) */
+function codecs(high?: boolean): string {
+    return high ? 'h265,h264' : 'h264';
+}
+
+/** Twitch's TV app's parameters (v1): H.264 up to 1920 wide, or with high also HEVC and no width limit */
+function tvPairs(kind: StreamKind, t: Token, high?: boolean): string[][] {
     var auth = KINDS[kind].auth;
     return [['player_type', t.playerType], ['player_backend', 'hlsjs'], ['playlist_include_framerate', 'true'],
-        ['allow_source', 'true'], ['supported_codecs', 'h264'], ['max_width', '1920']]
+        ['allow_source', 'true'], ['supported_codecs', codecs(high)]].concat(high ? [] : [['max_width', '1920']])
         .concat(kind === 'live' ? [['transcode_mode', 'cbr_v1']] : [])
         .concat([[auth[0], t.value], [auth[1], t.signature]]);
 }
 
 /** The website's parameters (v2), around the token; page: the website's address of the stream */
-function webPairs(kind: StreamKind, t: Token, page: string): string[][] {
+function webPairs(kind: StreamKind, t: Token, page: string, high?: boolean): string[][] {
     var acmb = btoa(JSON.stringify({ AppVersion: WEB.appVersion, ClientApp: 'twilight', URL: page }));
     return [['acmb', acmb], ['allow_source', 'true'], ['browser_family', 'chrome'], ['browser_version', '151.0'],
         ['cdm', 'wv'], ['enable_score', 'true']]
@@ -133,16 +138,17 @@ function webPairs(kind: StreamKind, t: Token, page: string): string[][] {
         .concat([['include_unavailable', 'true'], ['lang', 'en'], ['os_name', 'Linux'], ['os_version', 'undefined'],
             ['p', String(Math.floor(Math.random() * 1e7))], ['platform', 'web'], ['play_session_id', randomId(32, '0123456789abcdef')],
             ['player_backend', 'mediaplayer'], ['player_version', WEB.playerVersion], ['playlist_include_framerate', 'true'],
-            ['reassignments_supported', 'true'], ['sig', t.signature], ['supported_codecs', 'h264'], ['token', t.value],
+            ['reassignments_supported', 'true'], ['sig', t.signature], ['supported_codecs', codecs(high)], ['token', t.value],
             ['transcode_mode', 'cbr_v1']]);
 }
 
-/** The master playlist's address for a token (through the usher version the token was asked for) */
-export function masterUrl(kind: StreamKind, id: string, t: Token): string {
+/** The master playlist's address for a token (through the usher version the token was asked for); high: with HEVC
+ * and no width limit (the signed-in viewer's 1440p) */
+export function masterUrl(kind: StreamKind, id: string, t: Token, high?: boolean): string {
     var k = KINDS[kind];
     var name = encodeURIComponent(kind === 'live' ? id.toLowerCase() : id);
     return USHER + (t.usher === 'v2' ? k.v2 : k.v1) + name + '.m3u8?' +
-        query(t.usher === 'v2' ? webPairs(kind, t, k.page + name) : tvPairs(kind, t));
+        query(t.usher === 'v2' ? webPairs(kind, t, k.page + name, high) : tvPairs(kind, t, high));
 }
 
 /** A way of asking a live stream: player type, platform ('' this device's) and usher version */
@@ -195,9 +201,9 @@ function someTokens(login: string, ways: Way[], withAccount?: boolean): Promise<
         });
 }
 
-/** A token as playerType for usher version, and the master playlist's address it opens */
-export function playbackUrl(kind: StreamKind, id: string, playerType: string, version: UsherVersion, withAccount?: boolean): Promise<{ url: string; token: Token }> {
+/** A token as playerType for usher version, and the master playlist's address it opens (high: masterUrl's) */
+export function playbackUrl(kind: StreamKind, id: string, playerType: string, version: UsherVersion, withAccount?: boolean, high?: boolean): Promise<{ url: string; token: Token }> {
     return playbackToken(kind, id, playerType, version, withAccount).then(function (t) {
-        return { url: masterUrl(kind, id, t), token: t };
+        return { url: masterUrl(kind, id, t, high), token: t };
     });
 }

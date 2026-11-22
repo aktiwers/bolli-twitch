@@ -6,6 +6,7 @@
 
 import { load, save } from '../../core/store.js';
 import { Quality } from './engine.js';
+import { switchesCodec, tallScreen } from './high.js';
 
 var KEY = 'twitch.bandwidth';
 /** Bits per second assumed before anything was measured */
@@ -54,10 +55,13 @@ export function lowerTo(q: Quality): void {
 }
 
 /** The best quality the line allows (an index in list, best first): the first whose bandwidth fits, else the
- * lowest */
+ * lowest. A signed-in viewer's 1440p (high) only on a screen taller than 1080 lines, and only where a buffer changes
+ * its codec in place: elsewhere each switch to and from it (a break's, a stall's) starts the stream again with a
+ * moment's black, so there it plays only as the viewer's choice */
 export function fitQuality(list: Quality[], bps: number): number {
     for (var i = 0; i < list.length; i++) {
-        if (list[i].bandwidth <= bps * SHARE) {
+        // (asked only of a 1440p: the screen's height is the Android shell's to tell)
+        if (list[i].bandwidth <= bps * SHARE && (!list[i].high || tallScreen() && switchesCodec())) {
             return i;
         }
     }

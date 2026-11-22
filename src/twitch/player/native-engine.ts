@@ -40,7 +40,8 @@ export class NativeEngine implements Engine {
         this.halt();
         this.events = events;
         this.source = source;
-        this.choice = source.quality;
+        this.choice = source.openAt !== undefined ? source.openAt : source.quality;
+        source.openAt = undefined;
         this.pausedOn = !!paused;
         this.lastStall = 0;
         this.listen(source.kind !== 'clip');

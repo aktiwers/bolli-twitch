@@ -1,8 +1,8 @@
 // Settings in the cards of Twitch's TV app, in groups under headings: Your Profile alone at the top, then General (the
-// page the app opens on, Watch History's place), then Playback
-// (the remembered quality, Stable Volume on Android, the start dim, the stream request version, the channel page's
-// preview, the mature content warning), Chat (live chat's settings page over an example, gift and raid notices, the
-// channel points' bonus), Favorites (the tab's two rows and its previews), Twitch (its four QR pages), and last, set a
+// page the app opens on, Watch History's place), then Playback (the remembered quality, Stable Volume on Android, the
+// start dim, the ads skipped notice, the stream request version, the channel page's preview, the mature content
+// warning), Chat (live chat's settings page over an example, gift and raid notices, the channel points' bonus),
+// Favorites (the tab's two rows and its previews), Twitch (its four QR pages), and last, set a
 // little apart, the check for new versions and the version, which also names a newer one that is out. OK changes a
 // setting to its next choice (Left/Right step back and forth); it is saved at once and holds from the next start of
 // a stream. The QR library loads when Settings first shows, ready for the QR pages.
@@ -26,6 +26,7 @@ import { clearHistory, HISTORY_MODES, HistoryMode, historyMode, setHistoryMode, 
 import { Confirm } from '../confirm.js';
 import { holdOk } from '../held-ok.js';
 import { setSkipsGate, skipsGate } from '../player/gate.js';
+import { adsNotice, setAdsNotice } from '../player/ads-notice.js';
 import { canStabilize, setStableVolume, stableVolume } from '../../player/stable-volume.js';
 import { loadQr, QrPage, SETTINGS_PAGES } from '../qr.js';
 import { Card, CardList } from './cards.js';
@@ -147,6 +148,9 @@ var GATE: Setting = {
 var STABLE = onOffCard('volume', 'Stable Volume', stableVolume, setStableVolume,
     'Quiet streams come up and loud ones down, so streams play at about the same level.', 'Streams play as loud as each streamer sends them.');
 
+var ADS = onOffCard('skip', 'Ads Skipped Notice', adsNotice, setAdsNotice,
+    'A short notice shows each time a commercial break is skipped.', 'Commercial breaks are skipped without a notice.');
+
 var POINTS = onOffCard('points', 'Channel Points Bonus', claimsBonus, setClaimsBonus,
     'Signed in, the bonus Twitch offers as you watch a live stream is claimed for you.', 'The bonus is left unclaimed, as in Twitch\'s TV app.');
 
@@ -238,7 +242,7 @@ export class SettingsView implements Screen {
         this.quality = this.cards.length;
         this.add({ icon: 'quality', title: 'Remembered Quality', line: '', heading: 'Playback' }, { quality: true });
         // Stable Volume only where it works (the Android app; the LG TV's own Auto Volume does it there)
-        this.group(null, canStabilize() ? [STABLE, DIM, USHER, PREVIEW, GATE] : [DIM, USHER, PREVIEW, GATE]);
+        this.group(null, canStabilize() ? [STABLE, DIM, ADS, USHER, PREVIEW, GATE] : [DIM, ADS, USHER, PREVIEW, GATE]);
         this.group('Chat', [CHAT, NOTICES, POINTS]);
         this.group('Favorites', [LIVE_ROW, ALL_ROW, FAV_PREVIEWS]);
         for (var i = 0; i < TWITCH.length; i++) {

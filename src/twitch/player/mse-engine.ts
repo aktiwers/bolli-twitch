@@ -24,6 +24,7 @@
 import { aheadOf, Delay, dry, Engine, EngineEvents, Failure, Fetched, hideVideo, playVideo, Source } from './engine.js';
 import { HlsDetails as Details, HlsInstance, HlsStatic, loadHls, whenWorkerFails, workerFailed, workerPath, workerRuns } from './hls-loader.js';
 import { dropPipeline, fits, keepPipeline, releasePipeline, takePipeline, Transfer } from './pipeline.js';
+import { takesCodec } from './high.js';
 import { bandwidth, noteBandwidth, SHARE, startQuality } from './bandwidth.js';
 import { firstGroup, mergeChunks } from './cmaf.js';
 import { askInTwo, fetchAhead, InTwo, Loaded, SegmentAhead, TS_PACKET } from './segment.js';
@@ -609,6 +610,8 @@ export class MseEngine implements Engine {
     /** Our quality index -> hls.js's level index, and back */
     private levelOf: number[] = [];
     private ourOf: number[] = [];
+    /** A live start's position (Source.liveStart), -1 hls.js's live point */
+    private liveStart = -1;
     /** The quality picked (an index in the source's qualities), -1 for Auto */
     private choice = -1;
     /** Raised by every start and stop: work of an older start is dropped */
@@ -673,18 +676,23 @@ export class MseEngine implements Engine {
     }
 
     start(source: Source, events: EngineEvents, paused?: boolean): void {
-        this.halt(false);
+        // A start at another video codec where a buffer cannot change its own: the pipeline goes now, not kept and
+        // emptied first for a next start that would not take it (on the TV 0.16 s of a codec switch's black)
+        var choice = source.openAt !== undefined ? source.openAt : source.quality;
+        var opening = source.qualities[startQuality(source.qualities, choice)];
+        this.halt(!takesCodec(this.codecs(), opening && opening.codecs));
         var gen = ++this.gen;
         var self = this;
         // The session's media playlist is served once: a later start of this source (a retry) fetches a fresh one
         var level = source.level || null;
         var segment = source.segment || null;
-        source.level = source.segment = undefined;
+        this.liveStart = source.liveStart !== undefined ? source.liveStart : -1;
+        source.level = source.segment = source.liveStart = source.openAt = undefined;
         this.events = events;
         this.source = source;
         this.levelOf = [];
         this.ourOf = [];
-        this.choice = source.quality;
+        this.choice = choice;
         this.measured = false;
         this.pausedOn = !!paused;
         this.loadStopped = false;
@@ -710,8 +718,12 @@ export class MseEngine implements Engine {
                     }
                     return;
                 }
-                if (pipe && level && !fits(pipe, level.text)) {
-                    // The other format: hls.js would open a new source over it and start where the last video stood
+                // (the quality this start opens at, as parsed() picks it: not the source's, the viewer's choice, where
+                // it opens elsewhere, openAt)
+                var first = source.qualities[startQuality(source.qualities, self.choice)];
+                if (pipe && !fits(pipe, level ? level.text : null, first && first.codecs)) {
+                    // The other format (or video codec, where a buffer cannot change it): hls.js would open a new
+                    // source over it and start where the last video stood, or decode the new stream as the old codec
                     dropPipeline(pipe);
                     pipe = null;
                 }
@@ -953,7 +965,7 @@ export class MseEngine implements Engine {
             }
         }
         // A past broadcast from its start position (0 unless given; never where a taken pipeline's video stands)
-        hls.startLoad(source.kind === 'live' ? -1 : this.startAt);
+        hls.startLoad(source.kind === 'live' ? this.liveStart : this.startAt);
         if (!this.pausedOn && this.mayPlay()) {
             playVideo(this.video);
         }
@@ -1604,6 +1616,12 @@ export class MseEngine implements Engine {
         }
         var date = hls.playingDate;
         return { edge: hundredths(hls.latency), broadcast: date ? hundredths((Date.now() - date.getTime()) / 1000) : -1 };
+    }
+
+    /** The codecs of the quality playing ('' none) */
+    private codecs(): string {
+        var q = this.hls && this.source ? this.source.qualities[this.current()] : null;
+        return q && q.codecs || '';
     }
 
     current(): number {

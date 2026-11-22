@@ -20,8 +20,9 @@ export interface AndroidShell {
     /** The display's maximum height in lines (its largest mode: 1080 on an
      * HD Chromecast) */
     screenHeight(): number;
-    /** Whether a decoder here plays this video codec (avc1, vp9, av01) at
-     * this size and frame rate (0: any); AV1 only in hardware. Missing in
+    /** Whether a decoder here plays this video codec (avc1, vp9, av01,
+     * hev1/hvc1) at this size and frame rate (0: any); AV1 and HEVC only in
+     * hardware (shells built before HEVC check H.264 for it). Missing in
      * shells built before it */
     decodes?(codec: string, width: number, height: number, fps: number): boolean;
     /** The device's maker, model and Android version. Missing in shells

@@ -81,6 +81,18 @@ export function segmentAt(text: string, at: number): { start: number; uri: strin
     return null;
 }
 
+/** Where a media playlist's newest segment begins on its timeline (s), -1 none */
+export function newestStart(text: string): number {
+    var re = /#EXTINF:([\d.]+)/g;
+    var start = -1;
+    var end = 0;
+    for (var m = re.exec(text); m; m = re.exec(text)) {
+        start = end;
+        end += parseFloat(m[1]);
+    }
+    return start;
+}
+
 /** Where the segment holding at begins; at itself past the last segment */
 export function segmentStart(text: string, at: number): number {
     var segment = segmentAt(text, at);
@@ -301,7 +313,8 @@ export function cutWindow(text: string, span: Span): { text: string; from: numbe
 }
 
 /** Video codecs by their sample entry (the codecs list's other entries are audio) */
-var VIDEO_CODEC = /^(avc[1-4]|hvc1|hev1|dvh1|dvhe|dva1|dvav|av01|vp08|vp09)\b/;
+/** A video codec as a master's CODECS names it */
+export var VIDEO_CODEC = /^(avc[1-4]|hvc1|hev1|dvh1|dvhe|dva1|dvav|av01|vp08|vp09)\b/;
 
 /** Whether this device's Media Source plays a quality's video codecs, checked as hls.js checks its levels (it leaves
  * out the others); true when the master names none */

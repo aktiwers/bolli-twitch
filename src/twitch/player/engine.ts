@@ -17,6 +17,8 @@ export interface Quality {
     url: string;
     /** The variant's codecs as the master names them (none: not named, or a clip's file) */
     codecs?: string;
+    /** Listed only to the signed-in viewer (Twitch's 1440p, high.ts): asked beside the guest's stream */
+    high?: boolean;
 }
 
 /** Why playback stopped: no broadcast or no such video (offline), refused to this viewer (forbidden), kept for the
@@ -40,12 +42,18 @@ export interface Source {
     qualities: Quality[];
     /** The quality to play (an index in qualities), -1 for Auto */
     quality: number;
+    /** This start's quality instead, once (a start again at another codec; quality stays the viewer's choice) */
+    openAt?: number;
     /** Where a past broadcast starts (s) */
     startAt?: number;
     /** A media playlist the session already fetched (its stitched check), handed to hls.js once instead of a fetch */
     level?: Fetched;
-    /** A past broadcast's first segment fetched ahead, handed to hls.js once when it asks for that address */
+    /** A past broadcast's first segment fetched ahead (or a live stream's, with liveStart), handed to hls.js once when
+     * it asks for that address */
     segment?: SegmentAhead;
+    /** A live stream's start on its playlist's timeline (s) where it begins (its segment fetched ahead), once; none:
+     * hls.js's own live point */
+    liveStart?: number;
     /** Live streams and past broadcasts on the Media Source engine: every media playlist goes through it (live:
      * stitched segments become gaps; a past broadcast: cut to the window around where it plays) */
     filter?: (text: string) => string;

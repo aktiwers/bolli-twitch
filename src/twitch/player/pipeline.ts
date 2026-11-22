@@ -7,12 +7,13 @@
 // costs the next start ~0.1 s and one ~180 ms pause.
 
 import { unloadVideo } from '../../player/video.js';
+import { takesCodec } from './high.js';
 
 /** What hls.js's transferMedia hands over: the source and its buffers per track ({ buffer: SourceBuffer, ... }) */
 export interface Transfer {
     media: HTMLVideoElement;
     mediaSource: MediaSource;
-    tracks: { [track: string]: { buffer?: SourceBuffer } };
+    tracks: { [track: string]: { buffer?: SourceBuffer; codec?: string } };
 }
 
 /** Fallback wait for a buffer that removes data without telling (removed from its source mid-update) */
@@ -134,12 +135,20 @@ export function keepPipeline(video: HTMLVideoElement, t: Transfer | null): void 
     });
 }
 
-/** Whether t's buffers fit a stream with this media playlist: hls.js buffers an fMP4 stream (one with an init
- * segment) as it comes, audio and video together, and a TS stream's tracks apart. Over buffers that do not fit it
- * opens a new source but keeps the last video's time, so the stream would start where the last one stood */
-export function fits(t: Transfer, playlist: string): boolean {
+/** Whether t's buffers fit a stream with this media playlist and its start quality's codecs: hls.js buffers an fMP4
+ * stream (one with an init segment) as it comes, audio and video together, and a TS stream's tracks apart. Over
+ * buffers that do not fit it opens a new source but keeps the last video's time, so the stream would start where the
+ * last one stood; and a buffer of another video codec takes the new one only with changeType */
+export function fits(t: Transfer, playlist: string | null, codecs?: string): boolean {
     var both = t.tracks.audiovideo;
-    return (playlist.indexOf('#EXT-X-MAP') >= 0) === !!(both && both.buffer);
+    // (no playlist in hand: a start again of the same source, whose format the buffers had)
+    if (playlist !== null && (playlist.indexOf('#EXT-X-MAP') >= 0) !== !!(both && both.buffer)) {
+        return false;
+    }
+    // (another video codec: only where a buffer changes its codec in place; elsewhere it would decode the new
+    // stream as the old codec)
+    var held = both || t.tracks.video;
+    return takesCodec(held && held.codec, codecs);
 }
 
 /** The kept pipeline once it is emptied, taken over (null: none, or no longer usable) */

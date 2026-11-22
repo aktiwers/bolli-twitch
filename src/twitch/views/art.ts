@@ -31,6 +31,8 @@ var BAG = '<rect x="20" y="24" width="32" height="30" rx="4"/>';
 /** Two rows, one filled: the Favorites tab's row a card is about */
 var ROWS = '<rect x="10" y="12" width="44" height="14" rx="3"/><rect x="10" y="34" width="44" height="14" rx="3"/>';
 var SPEAKER = 'M10 24h10l14-11v38L20 40H10Z';
+/** Two arrows ahead: a commercial break skipped */
+var SKIP = 'M10 14l22 18-22 18ZM32 14l22 18-22 18Z';
 var HOUSE = 'M10 30L32 12l22 18v20a3 3 0 0 1-3 3H13a3 3 0 0 1-3-3Z';
 var HAND = 'M19 34V17a3.5 3.5 0 0 1 7 0v10V12a3.5 3.5 0 0 1 7 0v15V14a3.5 3.5 0 0 1 7 0v14V19a3.5 3.5 0 0 1 7 0v19c0 9-6 15-15 15h-2c-6 0-9-3-12-8l-7-10a3.5 3.5 0 0 1 5.5-4l5 5';
 
@@ -55,6 +57,7 @@ var ICONS: { [name: string]: string } = {
     dim: duo(SCREEN, SCREEN + '<path d="M8 33h48v12a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3Z" fill="currentColor"/>'),
     pip: duo(SCREEN, SCREEN + '<rect x="34" y="17" width="16" height="11" rx="1.5" fill="currentColor"/>'),
     gate: duo('<path d="' + HAND + '"/>', '<path d="' + HAND + '"/>'),
+    skip: duo('<path d="' + SKIP + '"/>', '<path d="' + SKIP + '"/>'),
     volume: duo('<path d="' + SPEAKER + '"/>', '<path d="' + SPEAKER + '"/><path d="M42 22a12 12 0 0 1 0 20M48 15a21 21 0 0 1 0 34"/>'),
     points: duo(ROUND, ROUND + '<path d="M32 18a12 12 0 0 1 12 12"/>'),
     usher: duo('<rect x="12" y="10" width="40" height="16" rx="3"/><rect x="12" y="32" width="40" height="16" rx="3"/>',
@@ -172,7 +175,7 @@ var BIG: { [name: string]: string } = {
 };
 
 /** A Settings card's icon: profile, help, terms, privacy, cookies (Twitch's), notices, emotes, layout, chatsize,
- * shade, dim, gate, volume, points, usher, quality, update, version (Bolli's) */
+ * shade, dim, gate, skip, volume, points, usher, quality, update, version (Bolli's) */
 export function cardIcon(name: string): Node {
     return svgNode(ICONS[name]);
 }

@@ -25,6 +25,7 @@
 import { h, setShown, setText, toggleClass, translate } from '../../../core/dom.js';
 import { KEY } from '../../../core/keys.js';
 import { toast } from '../../../ui/toast.js';
+import { adsNotice } from './ads-notice.js';
 import { GateInfo } from '../../api/channel.js';
 import { ClipFile } from '../../api/clip.js';
 import { GqlError } from '../../api/gql.js';
@@ -92,6 +93,12 @@ var MUTED = 'Audio for portions of this video has been muted as it appears to co
 /** The picture stands for the line (session.ts): after it had played, and before */
 var LINE_DROPPED = 'The connection dropped: it plays on once it is back.';
 var NO_LINE = 'No internet connection: it starts once it is back.';
+/** The stream starts again for a commercial break no 1440p way is without (session.ts restarted): its moment of
+ * black told, and at the break's end */
+var SKIPPING_ADS = 'Skipping ads';
+var ADS_SKIPPED = 'Ads skipped';
+/** A break left behind without a start again: told quickly (Settings: Ads Skipped Notice) */
+var SKIPPED_MS = 2000;
 /** Twitch's avatar is 117 px at 1920: asked a size that stays sharp */
 var AVATAR_SIZE = 150;
 
@@ -451,6 +458,18 @@ export class PlayerView implements Screen {
             },
             commercial: function (on: boolean, left?: BreakLeft) {
                 self.commercial(on, left);
+            },
+            restarted: function (why: 'break' | 'back' | 'quality') {
+                // Its moment of black (about half a second on the TV) told when a break causes it; no still over it:
+                // the TV paints a still that late that it came after the black, a minutes-old picture over the new one
+                if (self.visible && why !== 'quality' && adsNotice()) {
+                    toast(why === 'break' ? SKIPPING_ADS : ADS_SKIPPED);
+                }
+            },
+            adsSkipped: function () {
+                if (self.visible && adsNotice()) {
+                    toast(ADS_SKIPPED, SKIPPED_MS);
+                }
             }
         };
         this.el = h('div', 'bt-pl bt-pl--' + this.kind);

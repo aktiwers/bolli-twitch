@@ -28,12 +28,13 @@ import { clip } from '../api/clip.js';
 import { GqlError, signedIn } from '../api/gql.js';
 import { masterUrl, PLAYER_TYPES, playbackUrl, StreamKind, Token, TokenRefusal, tokenRefuses, usherCode, UsherVersion, Way, WAYS, wayTokens } from '../api/playback.js';
 import { aheadOf, Delay, dry, Engine, EngineEvents, Failure, FailureKind, Fetched, playVideo, Quality, showVideo, Source } from './engine.js';
-import { cutWindow, liveTarget, mediaSourcePlays, movedWindow, mutedRanges, parseQualities, pastBroadcast, segmentStart, Span, windowAt } from './master.js';
+import { byQuality, cutWindow, liveTarget, mediaSourcePlays, movedWindow, mutedRanges, newestStart, parseQualities, pastBroadcast, segmentStart, Span, windowAt } from './master.js';
+import { extraQualities, highHere, mergedMaster, switchesCodec, takesCodec, tallScreen } from './high.js';
 import { breakLeft, hasAds, markAdGaps } from './ads.js';
 import { SegmentAhead, segmentAhead } from './segment.js';
 import { stabilize } from './stable-volume.js';
 import { awaitLine, onLineBack, probe } from './line.js';
-import { startQuality } from './bandwidth.js';
+import { bandwidth, fitQuality, startQuality } from './bandwidth.js';
 import { loadHls } from './hls-loader.js';
 import { MseEngine, quickHere } from './mse-engine.js';
 import { NativeEngine } from './native-engine.js';
@@ -85,6 +86,12 @@ export interface SessionEvents {
      * standing), or its end; left: when it ends (Date.now() ms) and which ad of how many plays, as Twitch tells it
      * (told again as each playlist comes; none: not told) */
     commercial?(on: boolean, left?: BreakLeft): void;
+    /** The stream starts again at another quality, as this device cannot switch its video codec in place (a moment's
+     * black): for a commercial break (break: the 1440p had it; back: its end), or the viewer's choice (quality) */
+    restarted?(why: 'break' | 'back' | 'quality'): void;
+    /** A commercial break was left behind (skipped): once per break, at the start too (a player type without its
+     * pre-roll, a 1440p's break at the guest's quality), or not at all while it plays */
+    adsSkipped?(): void;
 }
 
 /** A commercial break's end (Date.now() ms) and which ad of how many plays */
@@ -119,6 +126,9 @@ export interface PlaybackState {
     adBreaks: number;
     /** Media playlists with a commercial break that went on as another player type's without it */
     swaps: number;
+    /** The signed-in viewer's qualities added to the guest's (Twitch's 1440p), and whether one plays lower for a break */
+    high: string[];
+    highLowered: boolean;
     /** Engine starts in this playback (a hand-over adds none) */
     starts: number;
     /** Why it stopped ('' while it plays) */
@@ -163,11 +173,19 @@ interface Resolved {
     url: string;
     text: string;
     qualities: Quality[];
-    /** A past broadcast's start quality's media playlist, fetched ahead with it (it does not change) */
+    /** A past broadcast's start quality's media playlist, fetched ahead with it (it does not change), or a live
+     * stream's beside the wait for the signed-in list (guestLevel) */
     level?: Fetched;
     /** And the segment it starts in, being fetched, and the start position it was asked for */
     segment?: SegmentAhead;
     segmentFor?: number;
+}
+
+/** The signed-in viewer's stream list for a live channel, asked beside the guest's for Twitch's 1440p (high.ts) */
+interface HighList {
+    url: string;
+    text: string;
+    qualities: Quality[];
 }
 
 /** An usher answer that is not a master: its status, whether the token explains a refusal, and usher's own code */
@@ -218,21 +236,39 @@ interface Playback {
     adsRun: number;
     adBreaks: number;
     swaps: number;
-    /** A live stream's spare: another way's qualities, ready for a commercial break, and when it was last asked (or
-     * the engine started) */
-    spare: { way: Way; qualities: Quality[] } | null;
+    /** A live stream's look through the ways for a commercial break (its spare: kept ready), and when the spare was
+     * last asked (or the engine started) */
+    look: Look;
     spareAt: number;
-    /** Every way's qualities asked in a break (by wayKey), and when they were (their addresses carry a token that
-     * runs out) */
-    ways: { [key: string]: Quality[] };
-    waysAt: number;
-    /** The look through every way under way (one at a time), and when the last found none */
-    sweeping: Promise<string | null> | null;
-    sweptAt: number;
     /** The quality the viewer had, while a lower one plays that a way has without the break (null: none lowered) */
     lowered: number | null;
     /** Every player type has the commercial break now (the screen was told) */
     inBreak: boolean;
+    /** The signed-in viewer's list asked for Twitch's 1440p (null: not asked), and when (its addresses carry a token
+     * that runs out) */
+    highAsk: Promise<HighList | null> | null;
+    highAskAt: number;
+    /** A 1440p that plays a lower quality for a commercial break no way has it without: its index and the viewer's
+     * choice before (null: none) */
+    highLowered: { index: number; choice: number } | null;
+    /** When the 1440p's own playlist was last looked at for the break's end */
+    highLookAt: number;
+    /** The 1440p's look through the signed-in ways for its break */
+    highLook: Look;
+    /** Auto stepped down from a 1440p after a stall: Auto again (among H.264's qualities) once one of them plays */
+    highDown: boolean;
+    /** The playlist on its way to the filter is a 1440p's with its break (the guest's quality takes over): the screen
+     * is not told of a break every player type has */
+    highQuiet: boolean;
+    /** A start again at another video codec on its way (its media playlist being fetched first): the newest one's
+     * mark, null none (a later choice, or one that goes on in the buffers, drops it) */
+    restarting: object | null;
+    /** The quality index the engine opened at (-1: Auto), what plays until it says (a codec change is judged by it) */
+    opened: number;
+    /** The break playing now was told left behind (adsSkipped), until a playlist without one */
+    skipTold: boolean;
+    /** This start left a player type's pre-roll (or a 1440p's break) behind: told as it starts */
+    skippedAtStart: boolean;
     retries: number;
     /** Since when the picture moves after the last failure (0: not since) */
     movingSince: number;
@@ -280,6 +316,8 @@ interface Ahead {
     type: number;
     usher: UsherVersion;
     result: Promise<Resolved>;
+    /** The signed-in viewer's list, asked beside it (null: not asked) */
+    high: Promise<HighList | null> | null;
 }
 
 var video: HTMLVideoElement | null = null;
@@ -446,8 +484,8 @@ export function rememberQuality(q: Quality | null): void {
 }
 
 /** Token, master and qualities of a live channel or past broadcast as PLAYER_TYPES[type] through usher */
-function resolveStream(target: Target, type: number, usher: UsherVersion, withAccount?: boolean): Promise<Resolved> {
-    return playbackUrl(target.kind as StreamKind, target.id, PLAYER_TYPES[type], usher, withAccount).then(function (r) {
+function resolveStream(target: Target, type: number, usher: UsherVersion, withAccount?: boolean, high?: boolean): Promise<Resolved> {
+    return playbackUrl(target.kind as StreamKind, target.id, PLAYER_TYPES[type], usher, withAccount, high).then(function (r) {
         return getText(r.url, 10000).then(function (text) {
             return { token: r.token, url: r.url, text: text, qualities: parseQualities(text, r.url) };
         }, function (e: HttpError) {
@@ -506,7 +544,8 @@ export function prefetch(target: Target): Promise<unknown> {
             return withLevel(r, target.startAt);
         });
     }
-    var entry: Ahead = { at: Date.now(), type: adFreeType, usher: usher, result: result };
+    var high = highWanted(target.kind, engineFor(target.kind), accountForced) ? askHigh(target, adFreeType, usher) : null;
+    var entry: Ahead = { at: Date.now(), type: adFreeType, usher: usher, result: result, high: high };
     ahead[k] = entry;
     return entry.result.then(noop, function () {
         if (ahead[k] === entry) {
@@ -561,7 +600,14 @@ function takeAhead(p: Playback): Promise<Resolved> | null {
     var k = key(p.target);
     var had = ahead[k];
     delete ahead[k];
-    return had && had.type === p.type && had.usher === p.usher && !p.withAccount ? had.result : null;
+    if (!had || had.type !== p.type || had.usher !== p.usher || p.withAccount) {
+        return null;
+    }
+    if (had.high && !p.highAsk) {
+        p.highAsk = had.high;
+        p.highAskAt = had.at;
+    }
+    return had.result;
 }
 
 /** Plays target. When it plays already (a preview going full screen) its new owner claims it: only the events and
@@ -599,7 +645,7 @@ export function play(target: Target, events: SessionEvents, options?: PlayOption
         target: { kind: target.kind, id: target.id, startAt: startAt },
         files: target.files && target.files.length ? target.files : null, events: events, options: opts,
         engineName: name, engine: null, source: null, token: null, type: adFreeType, playingType: adFreeType, usher: usherFor(),
-        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, swaps: 0, spare: null, spareAt: 0, ways: {}, waysAt: 0, sweeping: null, sweptAt: 0, lowered: null, inBreak: false, retries: 0, movingSince: 0, standing: false, lineFailure: null, toldLine: false, lookTimer: 0,
+        triedV2: false, triedGuest: false, withAccount: accountForced && signedIn(), resolving: 0, run: 0, adsRun: -1, adBreaks: 0, swaps: 0, look: newLook(false), spareAt: 0, lowered: null, inBreak: false, highAsk: null, highAskAt: 0, highLowered: null, highLookAt: 0, highLook: newLook(true), highDown: false, highQuiet: false, restarting: null, opened: -1, skipTold: false, skippedAtStart: false, retries: 0, movingSince: 0, standing: false, lineFailure: null, toldLine: false, lookTimer: 0,
         startedAt: Date.now(), shown: false, at: startAt || 0, recording: false, window: null, cutting: false, wentOnAt: 0, paused: false, left: false, held: false,
         ahead: false, kept: false, keptTimer: 0, muted: [], inMuted: false, failed: '', adTimer: 0, retryTimer: 0
     };
@@ -718,7 +764,25 @@ function startClip(p: Playback): void {
  * to the next player type before any engine starts */
 function startStream(p: Playback): void {
     var attempt = ++p.resolving;
-    (takeAhead(p) || resolveStream(p.target, p.type, p.usher, p.withAccount)).then(function (r) {
+    // (a 1440p lowered at an earlier attempt: its index is of a list this one makes anew)
+    p.highLowered = null;
+    var took = takeAhead(p);
+    var high = highWanted(p.target.kind, p.engineName, p.withAccount);
+    if (high && (!p.highAsk || Date.now() - p.highAskAt >= SPARE_MS)) {
+        p.highAsk = askHigh(p.target, p.type, p.usher);
+        p.highAskAt = Date.now();
+    }
+    (took || resolveStream(p.target, p.type, p.usher, p.withAccount)).then(function (r) {
+        if (!high || stale(p, attempt)) {
+            return r;
+        }
+        return Promise.all([withHigh(r, p.highAsk), guestLevel(r)]).then(function (both) {
+            if (both[1] && !both[0].level) {
+                both[0].level = both[1];
+            }
+            return both[0];
+        });
+    }).then(function (r) {
         if (stale(p, attempt)) {
             return undefined;
         }
@@ -736,15 +800,27 @@ function startStream(p: Playback): void {
             startEngine(p, source, r.token, true);
             return undefined;
         }
-        var first = list[startQuality(list, source.quality)];
+        var begin = function (first: Quality): Promise<void> {
         var kept = r.level && r.level.url === first.url ? r.level : null;
         return (kept ? Promise.resolve(kept.text) : getText(first.url, 10000)).then(function (text) {
             if (stale(p, attempt)) {
-                return;
+                return undefined;
             }
             var ads = live && hasAds(text);
+            var down = ads && first.high ? plainBest(list) : -1;
+            if (down >= 0) {
+                // The signed-in viewer's 1440p has a commercial break: the start plays the guest's best quality, and
+                // the 1440p comes back with the break's end (swapper: highBack)
+                // (the viewer's choice stays the source's, for the menu)
+                p.highLowered = { index: list.indexOf(first), choice: source.quality };
+                lookAtEnd(p, text);
+                p.skippedAtStart = true;
+                source.openAt = down;
+                return begin(list[down]);
+            }
             if (ads && p.type < PLAYER_TYPES.length - 1) {
                 p.adBreaks++;
+                p.skippedAtStart = true;
                 nextType(p);
                 return;
             }
@@ -759,16 +835,25 @@ function startStream(p: Playback): void {
             }
             // Stitched segments in the last player type too: it plays (those left out) but is not remembered
             startEngine(p, source, r.token, !ads);
+            if (p.skippedAtStart) {
+                p.skippedAtStart = false;
+                if (!ads) {
+                    skipped(p);
+                }
+            }
             // (after the start's segment is asked and the engine started: only the playing picture needs them)
             if (!live) {
                 p.muted = mutedRanges(text);
             }
+            return undefined;
         }, function () {
             // The engine asks for it again and tells what is wrong
             if (!stale(p, attempt)) {
                 startEngine(p, source, r.token, false);
             }
         });
+        };
+        return begin(list[startQuality(list, source.quality)]);
     }).then(null, function (e) {
         if (!stale(p, attempt)) {
             failed(p, outcome(p, e));
@@ -803,7 +888,11 @@ function liveFilter(p: Playback): (text: string) => string {
     return function (text: string): string {
         var r = markAdGaps(text);
         if (p === now) {
-            breakNow(p, r.ads, r.ads ? breakLeft(text) : null);
+            if (p.highQuiet) {
+                p.highQuiet = false;
+            } else {
+                breakNow(p, r.ads, r.ads ? breakLeft(text) : null);
+            }
             keepSpare(p);
         }
         return liveTarget(r.text);
@@ -853,31 +942,56 @@ function swapper(p: Playback): (url: string, text: string) => Promise<string> | 
         if (p !== now) {
             return null;
         }
+        var list = p.source ? p.source.qualities : [];
+        var at = -1;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].url === url) {
+                at = i;
+            }
+        }
+        var q = list[at];
         if (!(breakForced || hasAds(text))) {
+            p.skipTold = false;
             if (p.lowered !== null && p.engine) {
                 p.engine.setQuality(p.lowered);
                 p.lowered = null;
             }
+            if (p.highLowered !== null && !(q && q.high)) {
+                highBack(p);
+            }
             return null;
         }
-        var name = '';
-        var list = p.source ? p.source.qualities : [];
-        for (var i = 0; i < list.length; i++) {
-            if (list[i].url === url) {
-                name = list[i].name;
-            }
-        }
-        var spare = p.spare;
+        // (a 1440p's: through the signed-in ways; with none, the guest's best quality plays, quietly: highLower)
+        var high = !!(q && q.high);
+        var look = high ? p.highLook : p.look;
+        var name = q ? q.name : '';
+        var spare = look.spare;
         var first = spare ? levelOf(spare.qualities, name) : Promise.resolve(null);
         return first.then(function (clean) {
-            return clean !== null && !inBreak(spare ? spare.way : null, clean) && linesUp(text, clean) ? clean : soon(sweep(p, name, text));
+            return clean !== null && !inBreak(spare ? spare.way : null, clean) && linesUp(text, clean) ? clean : soon(sweep(p, look, name, at, text));
         }).then(function (clean) {
-            if (clean !== null && p === now) {
-                p.swaps++;
+            if (p === now) {
+                if (clean !== null) {
+                    p.swaps++;
+                    skipped(p);
+                } else if (high) {
+                    p.highQuiet = true;
+                }
             }
             return clean !== null ? clean : text;
         });
     };
+}
+
+/** A commercial break left behind (another way's playlist, a lower quality, the guest's for a 1440p): the player told,
+ * once per break */
+function skipped(p: Playback): void {
+    if (p === now && !p.skipTold) {
+        p.skipTold = true;
+        if (p.events.adsSkipped) {
+            p.events.adsSkipped();
+        }
+    }
 }
 
 /** A look through every way waits this long before the playlist goes on as it is (its stitched segments gaps); the
@@ -955,45 +1069,76 @@ function inWaves<T>(p: Playback, n: number, ask: (i: number) => Promise<T | null
     return wave(0);
 }
 
-/** Every other way's playlist of the quality called name, in WAYS' order, until one has no break and lines up with
- * text: it is the spare, and its playlist is the answer. With none, the best lower quality a way has without the
- * break plays meanwhile (null: the playlist goes on as it is until hls.js asks for that one). The ways' tokens are
- * asked in one query and their qualities kept for SPARE_MS; one look at a time, and after one that found nothing
- * none for SWEEP_MS */
-function sweep(p: Playback, name: string, text: string): Promise<string | null> {
-    if (p.sweeping || Date.now() - p.sweptAt < SWEEP_MS || !p.source) {
+/** A look through the ways for a commercial break, and what it keeps: the guest's (the quality's own ways), or a
+ * 1440p's (high: asked as the signed-in viewer, who alone is listed it) */
+interface Look {
+    high: boolean;
+    /** The way last found without the break, and its qualities, ready for the next */
+    spare: { way: Way; qualities: Quality[] } | null;
+    /** Every way's qualities asked in a break (by wayKey), and when they were (their addresses carry a token that
+     * runs out) */
+    ways: { [key: string]: Quality[] };
+    waysAt: number;
+    /** The look on its way (one at a time), and when the last found none */
+    sweeping: Promise<string | null> | null;
+    sweptAt: number;
+}
+
+function newLook(high: boolean): Look {
+    return { high: high, spare: null, ways: {}, waysAt: 0, sweeping: null, sweptAt: 0 };
+}
+
+/** Every other way's playlist of the quality called name (at its index), in WAYS' order, until one has no break and
+ * lines up with text: it is look's spare, and its playlist is the answer. With none, the best lower quality a way has
+ * without the break plays meanwhile (lower), or for a 1440p the guest's best quality until the break ends
+ * (highLower); null: the playlist goes on as it is until hls.js asks for that one. The ways' tokens are asked in one
+ * query and their qualities kept for SPARE_MS; one look at a time, and after one that found nothing none for
+ * SWEEP_MS */
+function sweep(p: Playback, look: Look, name: string, at: number, text: string): Promise<string | null> {
+    if (look.sweeping || !p.source) {
         return Promise.resolve(null);
     }
+    if (Date.now() - look.sweptAt < SWEEP_MS) {
+        if (look.high) {
+            highLower(p, at, text);
+        }
+        return Promise.resolve(null);
+    }
+    // (the playing way's own is the one with the break)
     var own = wayKey(ownWay(p));
     var ways = WAYS.filter(function (w) { return wayKey(w) !== own; });
     var lists: (Quality[] | null)[] = [];
-    var fresh = Date.now() - p.waysAt < SPARE_MS;
+    var fresh = Date.now() - look.waysAt < SPARE_MS;
     if (!fresh) {
-        p.ways = {};
+        look.ways = {};
     }
     var tokens: Promise<(Token | null)[] | null> = fresh ? Promise.resolve(null) :
-        wayTokens(p.target.id, ways, p.withAccount).then(null, function () { return []; });
+        wayTokens(p.target.id, ways, look.high || p.withAccount).then(null, function () { return []; });
     var listOf = function (tk: (Token | null)[] | null, i: number): Promise<Quality[] | null> {
         var k = wayKey(ways[i]);
         var t = tk && tk[i];
-        if (p.ways[k] || !t) {
-            return Promise.resolve(p.ways[k] || null);
+        if (look.ways[k] || !t) {
+            return Promise.resolve(look.ways[k] || null);
         }
-        var url = masterUrl('live', p.target.id, t);
+        var url = masterUrl('live', p.target.id, t, look.high);
         return getText(url, 5000).then(function (master) {
-            return (p.ways[k] = parseQualities(master, url).filter(mediaSourcePlays));
+            return (look.ways[k] = parseQualities(master, url).filter(mediaSourcePlays));
         }, function () { return null; });
     };
     var done = function (found: string | null): string | null {
-        p.sweeping = null;
-        if (found === null && p.lowered === null) {
-            p.sweptAt = Date.now();
+        look.sweeping = null;
+        // (a guest's lower quality found: looked again sooner, for its own)
+        if (found === null && (look.high || p.lowered === null)) {
+            look.sweptAt = Date.now();
+        }
+        if (found === null && look.high) {
+            highLower(p, at, text);
         }
         return found;
     };
-    p.sweeping = tokens.then(function (tk) {
+    look.sweeping = tokens.then(function (tk) {
         if (tk) {
-            p.waysAt = Date.now();
+            look.waysAt = Date.now();
         }
         return inWaves(p, ways.length, function (i) {
             return listOf(tk, i).then(function (q) {
@@ -1005,14 +1150,14 @@ function sweep(p: Playback, name: string, text: string): Promise<string | null> 
         });
     }).then(function (hit) {
         if (!hit) {
-            return lower(p, ways, lists, name, text);
+            return look.high ? null : lower(p, ways, lists, name, text);
         }
         if (p === now) {
-            p.spare = { way: ways[hit.i], qualities: lists[hit.i] as Quality[] };
+            look.spare = { way: ways[hit.i], qualities: lists[hit.i] as Quality[] };
         }
         return hit.found;
     }).then(done, function () { return done(null); });
-    return p.sweeping;
+    return look.sweeping;
 }
 
 /** No way has the quality called name without the break: of the ways without that quality, the best quality p's
@@ -1043,11 +1188,12 @@ function lower(p: Playback, ways: Way[], lists: (Quality[] | null)[], name: stri
     }).then(function (hit) {
         if (hit && p === now && p.engine) {
             var pick = picks[hit.i];
-            p.spare = { way: ways[pick.way], qualities: lists[pick.way] as Quality[] };
+            p.look.spare = { way: ways[pick.way], qualities: lists[pick.way] as Quality[] };
             if (p.lowered === null) {
                 p.lowered = p.source ? p.source.quality : -1;
             }
             p.engine.setQuality(pick.at);
+            skipped(p);
         }
         return null;
     });
@@ -1092,17 +1238,246 @@ function datesByNumber(text: string): { [n: string]: number } {
     return out;
 }
 
+/** The signed-in viewer's list is waited for this long after the guest's is in (both are asked at once; a start
+ * from a resting tile has both already): a slow answer does not hold the start, which plays without the 1440p */
+var HIGH_WAIT_MS = 300;
+/** While a 1440p plays a lower quality for a break, its own playlist is looked at this often for the break's end */
+var HIGH_LOOK_MS = 4000;
+
+/** Whether a start of kind on engineName asks the signed-in viewer's list beside the guest's: a live stream on the
+ * Media Source engine, signed in, on a device that plays Twitch's 1440p, unless the stream itself is the account's */
+function highWanted(kind: string, engineName: EngineName, withAccount: boolean): boolean {
+    return kind === 'live' && engineName === 'mse' && !withAccount && signedIn() && highHere();
+}
+
+/** The signed-in viewer's stream list of target as PLAYER_TYPES[type] through usher, with HEVC and no width limit;
+ * null when it cannot be had */
+function askHigh(target: Target, type: number, usher: UsherVersion): Promise<HighList | null> {
+    return resolveStream(target, type, usher, true, true).then(null, function () { return null; });
+}
+
+/** r with the signed-in viewer's qualities its own lacks added (its master too, for hls.js), once ask answers or
+ * HIGH_WAIT_MS passed; r itself without them. Never rejects */
+function withHigh(r: Resolved, ask: Promise<HighList | null> | null): Promise<Resolved> {
+    if (!ask) {
+        return Promise.resolve(r);
+    }
+    return new Promise<Resolved>(function (resolve) {
+        var done = false;
+        var timer = setTimeout(function () {
+            done = true;
+            resolve(r);
+        }, HIGH_WAIT_MS);
+        ask.then(function (h) {
+            if (done) {
+                return;
+            }
+            done = true;
+            clearTimeout(timer);
+            var extra = h ? extraQualities(r.qualities, h.qualities) : [];
+            resolve(!h || !extra.length ? r : {
+                token: r.token, url: r.url, text: mergedMaster(r.text, h.text, h.url, extra),
+                qualities: r.qualities.concat(extra).sort(byQuality), level: r.level, segment: r.segment, segmentFor: r.segmentFor
+            });
+        });
+    });
+}
+
+/** Beside the wait for the signed-in list (withHigh): the start quality's media playlist as the guest's list has it,
+ * asked at once where the start cannot open at the 1440p (Auto does not pick it here, and it is not the remembered
+ * quality): that quality is the same with the list merged, and the wait no longer comes before its request. null:
+ * not asked, or it failed (the start asks it then) */
+function guestLevel(r: Resolved): Promise<Fetched | null> {
+    var list = r.qualities.filter(mediaSourcePlays);
+    var remembered = rememberedQuality();
+    if (!list.length || r.level || (remembered ? remembered.height > list[0].height : tallScreen() && switchesCodec())) {
+        return Promise.resolve(null);
+    }
+    var first = list[startQuality(list, rememberedIndex(list))];
+    return getText(first.url, 10000).then(function (text): Fetched {
+        return { url: first.url, text: text, at: Date.now() };
+    }, function () {
+        return null;
+    });
+}
+
+/** The best quality in list that is not the signed-in viewer's alone (the guest's best), or -1 */
+function plainBest(list: Quality[]): number {
+    for (var i = 0; i < list.length; i++) {
+        if (!list[i].high) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/** No way has the 1440p (at its index) without the break (text: its playlist): the guest's best quality plays until
+ * it ends (highBack gives the 1440p back) */
+function highLower(p: Playback, at: number, text: string): void {
+    if (p !== now || !p.source || !p.engine || p.highLowered !== null || at < 0) {
+        return;
+    }
+    var down = plainBest(p.source.qualities);
+    if (down < 0) {
+        return;
+    }
+    p.highLowered = { index: at, choice: p.source.quality };
+    lookAtEnd(p, text);
+    if (toQuality(p, down, undefined, 'break')) {
+        // (the start again tells it: restarted)
+        p.skipTold = true;
+    } else {
+        skipped(p);
+    }
+}
+
+/** A 1440p lowered for its break (text: its playlist then): its own playlist is first looked at when Twitch says
+ * the break ends (its date ranges), then every HIGH_LOOK_MS; not each one meanwhile (a 3-minute break was 45
+ * requests), nor during the start again's black */
+function lookAtEnd(p: Playback, text: string): void {
+    var left = breakLeft(text);
+    p.highLookAt = Date.now() + Math.max(0, (left ? left.seconds * 1000 : 0) - HIGH_LOOK_MS);
+}
+
+/** A 1440p lowered for a break: its own playlist looked at (at most every HIGH_LOOK_MS, from lookAtEnd); without the
+ * break it plays again (from the next segment), and the viewer's choice is as before */
+function highBack(p: Playback): void {
+    var lowered = p.highLowered;
+    var t = Date.now();
+    if (!lowered || !p.source || p.restarting || t - p.highLookAt < HIGH_LOOK_MS) {
+        return;
+    }
+    p.highLookAt = t;
+    var q = p.source.qualities[lowered.index];
+    if (!q) {
+        p.highLowered = null;
+        return;
+    }
+    var was = lowered;
+    getText(q.url, 5000).then(function (own) {
+        if (p !== now || p.highLowered !== was || !p.source || !p.engine || breakForced || hasAds(own)) {
+            return;
+        }
+        p.highLowered = null;
+        toQuality(p, was.index, was.choice, 'back', own);
+        if (p.events.qualities) {
+            p.events.qualities(p.source.qualities, p.source.quality, p.engine.current());
+        }
+    }, noop);
+}
+
+/** The picture stood in Auto while a 1440p played: the best H.264 quality the line allows plays from the next
+ * segment, then Auto among those (hls.js's Auto never leaves the codec it plays, and the 1440p is HEVC's only one) */
+function highStepDown(p: Playback): void {
+    if (!p.source || !p.engine || p.source.quality !== -1 || p.highDown) {
+        return;
+    }
+    var list = p.source.qualities;
+    var playing = list[p.engine.current()];
+    if (!playing || !playing.high) {
+        return;
+    }
+    var plain = list.filter(function (x) { return !x.high; });
+    var fit = plain[fitQuality(plain, bandwidth())];
+    if (!fit) {
+        return;
+    }
+    p.highDown = true;
+    toQuality(p, list.indexOf(fit), undefined, 'quality');
+}
+
+/** A start again waits this long at most for its segment fetched ahead before it starts (a slow line) */
+var RESTART_WAIT_MS = 1500;
+
+/** The engine to quality index (-1: Auto) from the next segment; where the video codec changes and this device's
+ * buffers cannot change theirs (switchesCodec: Chrome 38), the stream starts again at it instead (a moment's black,
+ * seen on the TV's own screen capture whatever is done with the last pipeline: a fresh Media Source blanks its video
+ * plane; a live stream at the live point; restartAt), and the player is told why. choice: the viewer's choice the
+ * source keeps afterwards (for the menu and later starts), as it is unless given; known: the new quality's media
+ * playlist, fetched just now. Whether it starts again */
+function toQuality(p: Playback, index: number, choice: number | undefined, why: 'break' | 'back' | 'quality', known?: string): boolean {
+    if (!p.source || !p.engine) {
+        return false;
+    }
+    var list = p.source.qualities;
+    var from = list[p.engine.current()] || list[startQuality(list, p.opened)];
+    var to = list[index >= 0 ? index : startQuality(list, -1)];
+    var keep = choice === undefined ? p.source.quality : choice;
+    if (p.engineName === 'mse' && from && to && !takesCodec(from.codecs, to.codecs)) {
+        restartAt(p, index, to, keep, why, known);
+        return true;
+    }
+    p.restarting = null;
+    p.opened = index;
+    p.source.quality = keep;
+    p.engine.setQuality(index);
+    return false;
+}
+
+/** The stream starts again at quality index (to: the quality that is) for why: its media playlist fetched first
+ * (known: fetched just now), its commercial break swapped as hls.js's loads have it, then a live stream's newest
+ * segment (where hls.js's own live start lands too), both served to the new hls.js, which starts there. Meanwhile
+ * the playing picture goes on: the fresh Media Source's black begins only once what it shows first is in (on the
+ * TV 0.04 s for the playlist and 0.28 s for a 1080p segment that were black before). Not past RESTART_WAIT_MS for
+ * the segment (it is served when it comes); with stitched segments left, hls.js's own start (they are gaps); a
+ * failed fetch starts it anyway (hls.js asks again and tells). keep: the viewer's choice the source keeps */
+function restartAt(p: Playback, index: number, to: Quality, keep: number, why: 'break' | 'back' | 'quality', known?: string): void {
+    var source = p.source as Source;
+    var run = p.run;
+    var mark = p.restarting = {};
+    var go = function (text: string | null, ahead?: SegmentAhead, at?: number): void {
+        if (p !== now || p.restarting !== mark || p.run !== run || p.source !== source || !p.engine) {
+            return;
+        }
+        p.restarting = null;
+        if (text !== null) {
+            source.level = { url: to.url, text: text, at: Date.now() };
+        }
+        if (ahead) {
+            source.segment = ahead;
+            source.liveStart = at;
+        }
+        source.openAt = index;
+        source.quality = keep;
+        startEngine(p, source, p.token);
+        if (p.events.restarted) {
+            p.events.restarted(why);
+        }
+    };
+    (known !== undefined ? Promise.resolve(known) : getText(to.url, 5000)).then(function (text: string): Promise<string> | string {
+        // (only a playlist with the break: the swap's other side would act on the playback the start replaces)
+        var swapped = source.swap && (breakForced || hasAds(text)) ? source.swap(to.url, text) : null;
+        return swapped || text;
+    }).then(function (text: string) {
+        var at = source.kind === 'live' && !hasAds(text) ? newestStart(text) : -1;
+        var ahead = at >= 0 ? segmentAhead(to.url, text, at) : null;
+        if (!ahead || !ahead.data) {
+            go(text);
+            return;
+        }
+        var got = ahead;
+        var done = function (): void {
+            clearTimeout(timer);
+            go(text, got, at);
+        };
+        var timer = setTimeout(done, RESTART_WAIT_MS);
+        ahead.data.then(done, done);
+    }, function () {
+        go(null);
+    });
+}
+
 /** Keeps p's spare as its media playlists come (every 2 s while live plays): asked SPARE_FIRST_MS after the engine
  * started (the first type of SPARE_ORDER that is not p's), then again every SPARE_MS (its addresses carry a token
  * that runs out) */
 function keepSpare(p: Playback): void {
     var t = Date.now();
-    if (t - p.spareAt < (p.spare ? SPARE_MS : SPARE_FIRST_MS)) {
+    if (t - p.spareAt < (p.look.spare ? SPARE_MS : SPARE_FIRST_MS)) {
         return;
     }
     p.spareAt = t;
     var type = SPARE_ORDER[0] === p.playingType ? SPARE_ORDER[1] : SPARE_ORDER[0];
-    var way = p.spare ? p.spare.way : { type: PLAYER_TYPES[type], platform: p.usher === 'v2' ? 'web' : '', usher: p.usher };
+    var way = p.look.spare ? p.look.spare.way : { type: PLAYER_TYPES[type], platform: p.usher === 'v2' ? 'web' : '', usher: p.usher };
     wayTokens(p.target.id, [way], p.withAccount).then(function (tk) {
         var token = tk[0];
         if (!token) {
@@ -1111,7 +1486,7 @@ function keepSpare(p: Playback): void {
         var url = masterUrl('live', p.target.id, token);
         return getText(url, 10000).then(function (master) {
             if (p === now) {
-                p.spare = { way: way, qualities: parseQualities(master, url).filter(mediaSourcePlays) };
+                p.look.spare = { way: way, qualities: parseQualities(master, url).filter(mediaSourcePlays) };
             }
         });
     }).then(null, noop);
@@ -1234,6 +1609,7 @@ function startEngine(p: Playback, source: Source, token: Token | null, adFree?: 
         p.cutting = false;
         source.filter = source.whole = source.swap = source.levels = undefined;
     }
+    p.opened = source.openAt !== undefined ? source.openAt : source.quality;
     var run = ++p.run;
     clearTimeout(p.adTimer);
     p.adTimer = 0;
@@ -1271,13 +1647,25 @@ function engineEvents(p: Playback, run: number): EngineEvents {
             }
         },
         quality: function (index: number) {
-            if (mine() && p.source && p.events.qualities) {
+            if (!mine() || !p.source) {
+                return;
+            }
+            var q = p.source.qualities[index];
+            if (p.highDown && q && !q.high && p.engine) {
+                // Stepped down from a 1440p: Auto again, among H.264's qualities (hls.js's Auto stays in one codec)
+                p.highDown = false;
+                p.engine.setQuality(-1);
+            }
+            if (p.events.qualities) {
                 p.events.qualities(p.source.qualities, p.source.quality, index);
             }
         },
         stalled: function (action: string) {
             if (!mine()) {
                 return;
+            }
+            if (!action) {
+                highStepDown(p);
             }
             if (action) {
                 noteStall(p.target.id, action);
@@ -1544,6 +1932,8 @@ function failed(p: Playback, o: Outcome): void {
         });
         return;
     }
+    // (a pre-roll left behind by this start is not a later one's)
+    p.skippedAtStart = false;
     if ((f.kind === 'network' || f.kind === 'media') && retry(p, f)) {
         return;
     }
@@ -1783,11 +2173,13 @@ export function setQuality(index: number): void {
     p.source.quality = q ? index : -1;
     // (the viewer's choice holds also through a break that lowered it)
     p.lowered = null;
+    p.highLowered = null;
+    p.highDown = false;
     if (p.options.remember !== false) {
         rememberQuality(q);
     }
     if (p.engine) {
-        p.engine.setQuality(p.source.quality);
+        toQuality(p, p.source.quality, undefined, 'quality');
     }
     if (p.events.qualities) {
         p.events.qualities(p.source.qualities, p.source.quality, p.engine ? p.engine.current() : -1);
@@ -1900,6 +2292,8 @@ export function playbackState(): PlaybackState | null {
         paused: v.paused,
         adBreaks: p.adBreaks,
         swaps: p.swaps,
+        high: list.filter(function (x) { return !!x.high; }).map(function (x) { return x.name; }),
+        highLowered: !!p.highLowered,
         starts: p.run,
         failed: p.failed
     };

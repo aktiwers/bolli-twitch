@@ -16,6 +16,9 @@
 //   quick(on, lengths?)                          past broadcasts land quickly at starts and jumps (first bytes first), or
 //                                                not, and tell short lengths with it (lengths false: without them), from
 //                                                the next start on in this run (no argument: the device's own)
+//   high(on?)                                    this device taken as playing Twitch's 1440p (signed in: the signed-in
+//                                                viewer's list asked beside the guest's), or not, for this run (no
+//                                                argument: the device's own answer); returns what holds
 //   quality(index), seek(s), pause(), resume(), debug(on) (hls.js's warnings on the console)
 //   state()                                      the session's state, first picture, stalls, seeks, pipelines, live
 //                                                delay, how past broadcasts land (quick), events
@@ -29,6 +32,7 @@ import { pipelineStats } from './pipeline.js';
 import { adStats } from './ads.js';
 import { Failure, Quality } from './engine.js';
 import { quickHere, setHlsDebug, setQuick, shortHere } from './mse-engine.js';
+import { highHere, setHighHere } from './high.js';
 import { audioGraph } from './stable-volume.js';
 
 var MAX_EVENTS = 40;
@@ -189,6 +193,10 @@ var api = {
     quick: function (on?: boolean, lengths?: boolean): boolean {
         setQuick(on === undefined ? null : on, lengths);
         return quickHere();
+    },
+    high: function (on?: boolean): boolean {
+        setHighHere(on === undefined ? null : on);
+        return highHere();
     },
     fakeBreak: function (on: boolean, types?: string[]): void {
         session.forceBreak(on, types);
